@@ -1,3 +1,61 @@
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { FileText, Search } from 'lucide-react'
+import { Button, EmptyState, PageHeader, Tabs } from '@/components/ui'
+import { useCurrentUser, useStore } from '@/store/useStore'
+import { isTerminal, renterAttention } from '@/components/shared/applicationUtils'
+import { ApplicationRow } from '@/components/renter/ApplicationRow'
+import { AttentionAction } from '@/components/renter/AttentionAction'
+
+type Tab = 'all' | 'active' | 'action' | 'closed'
+
+const EMPTY: Record<Tab, { title: string; description: string }> = {
+  all: { title: 'No applications yet', description: 'Find a home you love and apply in minutes. You only pay if the owner accepts you.' },
+  active: { title: 'No active applications', description: 'Applications in progress will appear here.' },
+  action: { title: 'Nothing needs your action', description: 'You’re all caught up. We’ll notify you when an owner responds.' },
+  closed: { title: 'No closed applications', description: 'Completed, declined, and withdrawn applications will appear here.' },
+}
+
 export default function RenterApplicationsPage() {
-  return <div className="container-x py-16"><h1 className="text-2xl font-bold">RenterApplicationsPage</h1><p className="text-ink-500">Coming soon.</p></div>
+  const user = useCurrentUser()
+  const applications = useStore((s) => s.applications)
+  const reviews = useStore((s) => s.reviews)
+  const [tab, setTab] = useState<Tab>('all')
+
+  const groups = useMemo(() => {
+    const mine = applications.filter((a) => a.renterId === user?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return {
+      all: mine,
+      active: mine.filter((a) => !isTerminal(a.status)),
+      action: mine.filter((a) => user && renterAttention(a, reviews, user.id)),
+      closed: mine.filter((a) => isTerminal(a.status)),
+    }
+  }, [applications, reviews, user])
+
+  if (!user) return null
+  const list = groups[tab]
+
+  return (
+    <div>
+      <PageHeader title="My applications" description="Track every home you’ve applied for, from verification to move-in."
+        action={<Link to="/listings"><Button variant="outline"><Search className="h-4 w-4" /> Find more homes</Button></Link>} />
+      <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[
+        { value: 'all', label: 'All', count: groups.all.length },
+        { value: 'active', label: 'Active', count: groups.active.length },
+        { value: 'action', label: 'Needs action', count: groups.action.length },
+        { value: 'closed', label: 'Closed', count: groups.closed.length },
+      ]} />
+      {list.length === 0 ? (
+        <EmptyState icon={<FileText className="h-6 w-6" />} title={EMPTY[tab].title} description={EMPTY[tab].description}
+          action={<Link to="/listings"><Button>Browse listings</Button></Link>} />
+      ) : (
+        <div className="space-y-3">
+          {list.map((a) => {
+            const kind = renterAttention(a, reviews, user.id)
+            return <ApplicationRow key={a.id} application={a} extra={kind ? <AttentionAction application={a} kind={kind} /> : undefined} />
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
