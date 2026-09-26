@@ -1,0 +1,220 @@
+import type { Application, Listing, Message, Notification, Review, User } from '@/types'
+import { daysFromNow } from '@/lib/utils'
+
+const img = (id: string) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1200&q=70`
+
+export const SEED_USERS: User[] = [
+  { id: 'u_admin', name: 'Sara Admin', email: 'admin@staybridge.demo', role: 'admin', verification: 'verified', hasTenantPass: false, createdAt: daysFromNow(-200) },
+  { id: 'u_owner1', name: 'Marco Benedetti', email: 'marco@staybridge.demo', role: 'owner', phone: '+39 333 010 2244', verification: 'verified', hasTenantPass: false, createdAt: daysFromNow(-120), bio: 'I manage a few family apartments in Milan and Berlin. Long-term tenants preferred.' },
+  { id: 'u_owner2', name: 'Aisha Rahman', email: 'aisha@staybridge.demo', role: 'owner', phone: '+44 7700 900123', verification: 'verified', hasTenantPass: false, createdAt: daysFromNow(-90), bio: 'Renting out rooms in my London townhouse.' },
+  { id: 'u_renter1', name: 'Jonas Weber', email: 'jonas@staybridge.demo', role: 'renter', phone: '+49 151 2233 4455', verification: 'verified', hasTenantPass: true, createdAt: daysFromNow(-40), bio: 'Software engineer relocating for work. Tidy, quiet, non-smoker.' },
+  { id: 'u_renter2', name: 'Priya Nair', email: 'priya@staybridge.demo', role: 'renter', verification: 'unverified', hasTenantPass: false, createdAt: daysFromNow(-5), bio: 'Master student starting in September.' },
+  { id: 'u_renter3', name: 'Tom Okafor', email: 'tom@staybridge.demo', role: 'renter', verification: 'pending', hasTenantPass: false, createdAt: daysFromNow(-12) },
+]
+
+export const SEED_LISTINGS: Listing[] = [
+  {
+    id: 'l_1', ownerId: 'u_owner1', title: 'Sunny 2-bed apartment near Navigli canals', type: 'apartment',
+    description: 'Bright, recently renovated apartment on the third floor with a balcony overlooking a quiet courtyard. Ten minutes on foot to Porta Genova metro. Ideal for a couple or two professionals. Bills for water and building are included; electricity is metered separately.',
+    city: 'Milan', area: 'Navigli', address: 'Via Vigevano 18, 20144 Milano', price: 1650, currency: 'USD', deposit: 3300, billsIncluded: true,
+    availableFrom: daysFromNow(14), minStayMonths: 12, bedrooms: 2, bathrooms: 1, sizeSqm: 78, furnished: true,
+    amenities: ['Wi-Fi', 'Washing machine', 'Dishwasher', 'Balcony', 'Elevator', 'Heating', 'Desk / workspace'],
+    houseRules: ['No smoking', 'No parties', 'Professionals only'],
+    images: [img('photo-1502672260266-1c1ef2d93688'), img('photo-1522708323590-d24dbb6b0267'), img('photo-1484154218962-a197022b5858')],
+    status: 'active', featured: true, views: 412, createdAt: daysFromNow(-20),
+  },
+  {
+    id: 'l_2', ownerId: 'u_owner2', title: 'Large double room in Victorian townhouse', type: 'room',
+    description: 'A generous double room with bay window and original fireplace in a friendly professional houseshare of three. Shared kitchen and two bathrooms. Garden at the back. Five minutes to Clapham North tube.',
+    city: 'London', area: 'Clapham', address: '42 Landor Road, SW9 9PJ', price: 1100, currency: 'USD', deposit: 1100, billsIncluded: true,
+    availableFrom: daysFromNow(7), minStayMonths: 6, bedrooms: 1, bathrooms: 2, sizeSqm: 18, furnished: true,
+    amenities: ['Wi-Fi', 'Washing machine', 'Garden', 'Heating', 'Desk / workspace', 'Bike storage'],
+    houseRules: ['No smoking', 'No pets', 'Quiet hours after 10pm', 'Professionals only'],
+    images: [img('photo-1505693416388-ac5ce068fe85'), img('photo-1560448204-e02f11c3d0e2')],
+    status: 'active', featured: true, views: 288, createdAt: daysFromNow(-15),
+  },
+  {
+    id: 'l_3', ownerId: 'u_owner1', title: 'Compact studio in Prenzlauer Berg', type: 'studio',
+    description: 'Cosy studio with a separate kitchenette and a small courtyard-facing window. Perfect for a single person who wants to be in the heart of Berlin. Tram stop at the door.',
+    city: 'Berlin', area: 'Prenzlauer Berg', address: 'Schönhauser Allee 120, 10437 Berlin', price: 890, currency: 'USD', deposit: 1780, billsIncluded: false,
+    availableFrom: daysFromNow(30), minStayMonths: 12, bedrooms: 0, bathrooms: 1, sizeSqm: 32, furnished: true,
+    amenities: ['Wi-Fi', 'Heating', 'Elevator', 'Bike storage'],
+    houseRules: ['No smoking', 'No parties'],
+    images: [img('photo-1536376072261-38c75010e6c9'), img('photo-1493809842364-78817add7ffb')],
+    status: 'active', featured: false, views: 190, createdAt: daysFromNow(-9),
+  },
+  {
+    id: 'l_4', ownerId: 'u_owner2', title: 'Family house with garden in Richmond', type: 'house',
+    description: 'Semi-detached three-bedroom house with a large south-facing garden and off-street parking. Close to good schools and Richmond Park. Unfurnished, long lets only.',
+    city: 'London', area: 'Richmond', address: '7 Sheen Park, TW9 1UW', price: 3400, currency: 'USD', deposit: 5100, billsIncluded: false,
+    availableFrom: daysFromNow(45), minStayMonths: 24, bedrooms: 3, bathrooms: 2, sizeSqm: 130, furnished: false,
+    amenities: ['Garden', 'Parking', 'Heating', 'Washing machine', 'Dishwasher', 'Pets allowed'],
+    houseRules: ['No smoking'],
+    images: [img('photo-1568605114967-8130f3a36994'), img('photo-1600596542815-ffad4c1539a9'), img('photo-1600585154340-be6161a56a0c')],
+    status: 'active', featured: false, views: 96, createdAt: daysFromNow(-6),
+  },
+  {
+    id: 'l_5', ownerId: 'u_owner1', title: 'Shared room for students near Politecnico', type: 'shared',
+    description: 'One bed in a twin room in a lively student flat. Kitchen, living room, and fast fibre internet shared with four other students. Bills included, flexible contracts by semester.',
+    city: 'Milan', area: 'Città Studi', address: 'Via Pascoli 40, 20133 Milano', price: 420, currency: 'USD', deposit: 420, billsIncluded: true,
+    availableFrom: daysFromNow(3), minStayMonths: 4, bedrooms: 1, bathrooms: 1, sizeSqm: 20, furnished: true,
+    amenities: ['Wi-Fi', 'Washing machine', 'Heating', 'Desk / workspace'],
+    houseRules: ['No smoking', 'Students welcome', 'Quiet hours after 10pm'],
+    images: [img('photo-1555854877-bab0e564b8d5'), img('photo-1502005229762-cf1b2da7c5d6')],
+    status: 'active', featured: false, views: 341, createdAt: daysFromNow(-4),
+  },
+  {
+    id: 'l_6', ownerId: 'u_owner2', title: 'Modern 1-bed with river view in Canary Wharf', type: 'apartment',
+    description: 'Twelfth-floor apartment with floor-to-ceiling windows, concierge, and residents gym. Ideal for finance professionals. Furnished to a high standard.',
+    city: 'London', area: 'Canary Wharf', address: '1 Pan Peninsula Square, E14 9HN', price: 2600, currency: 'USD', deposit: 3900, billsIncluded: false,
+    availableFrom: daysFromNow(21), minStayMonths: 12, bedrooms: 1, bathrooms: 1, sizeSqm: 55, furnished: true,
+    amenities: ['Wi-Fi', 'Gym', 'Elevator', 'Security', 'Air conditioning', 'Dishwasher', 'Washing machine'],
+    houseRules: ['No smoking', 'No pets', 'Professionals only'],
+    images: [img('photo-1512917774080-9991f1c4c750'), img('photo-1567767292278-a4f21aa2d36e')],
+    status: 'active', featured: true, views: 523, createdAt: daysFromNow(-11),
+  },
+  {
+    id: 'l_7', ownerId: 'u_owner1', title: 'Attic loft with terrace in Kreuzberg', type: 'apartment',
+    description: 'Characterful top-floor loft with exposed beams and a private roof terrace. Open-plan living, one bedroom, and a home office nook. No lift.',
+    city: 'Berlin', area: 'Kreuzberg', address: 'Oranienstraße 45, 10969 Berlin', price: 1450, currency: 'USD', deposit: 2900, billsIncluded: false,
+    availableFrom: daysFromNow(10), minStayMonths: 12, bedrooms: 1, bathrooms: 1, sizeSqm: 64, furnished: false,
+    amenities: ['Wi-Fi', 'Balcony', 'Heating', 'Desk / workspace', 'Pets allowed'],
+    houseRules: ['No smoking', 'Couples welcome'],
+    images: [img('photo-1493663284031-b7e3aefcae8e'), img('photo-1513694203232-719a280e022f')],
+    status: 'active', featured: false, views: 150, createdAt: daysFromNow(-3),
+  },
+  {
+    id: 'l_8', ownerId: 'u_owner2', title: 'Ensuite room in quiet Islington flatshare', type: 'room',
+    description: 'Private ensuite room in a two-person flat share with a working professional. Newly fitted kitchen. Excellent transport links from Highbury & Islington.',
+    city: 'London', area: 'Islington', address: '15 Highbury Grove, N5 2EA', price: 1250, currency: 'USD', deposit: 1250, billsIncluded: true,
+    availableFrom: daysFromNow(18), minStayMonths: 6, bedrooms: 1, bathrooms: 1, sizeSqm: 16, furnished: true,
+    amenities: ['Wi-Fi', 'Washing machine', 'Heating', 'Dishwasher'],
+    houseRules: ['No smoking', 'No pets', 'Quiet hours after 10pm'],
+    images: [img('photo-1616594039964-ae9021a400a0'), img('photo-1598928506311-c55ded91a20c')],
+    status: 'pending_review', featured: false, views: 0, createdAt: daysFromNow(-1),
+  },
+  {
+    id: 'l_9', ownerId: 'u_owner1', title: 'Garden apartment in Lisbon Graça', type: 'apartment',
+    description: 'Ground-floor two-bedroom with a private garden and lemon tree, five minutes from the Miradouro. Tiled floors, high ceilings, and lots of light.',
+    city: 'Lisbon', area: 'Graça', address: 'Rua da Graça 88, 1170-165 Lisboa', price: 1300, currency: 'USD', deposit: 2600, billsIncluded: false,
+    availableFrom: daysFromNow(25), minStayMonths: 12, bedrooms: 2, bathrooms: 1, sizeSqm: 70, furnished: true,
+    amenities: ['Wi-Fi', 'Garden', 'Washing machine', 'Air conditioning', 'Pets allowed'],
+    houseRules: ['No smoking', 'Couples welcome'],
+    images: [img('photo-1560185007-cde436f6a4d0'), img('photo-1560185127-6ed189bf02f4')],
+    status: 'active', featured: false, views: 77, createdAt: daysFromNow(-2),
+  },
+  {
+    id: 'l_10', ownerId: 'u_owner2', title: 'Penthouse studio with skyline view', type: 'studio',
+    description: 'Compact but luxurious studio on the top floor with a wraparound terrace. Concierge building with pool. Short walk to Barcelona beach.',
+    city: 'Barcelona', area: 'Poblenou', address: 'Carrer de Pujades 200, 08005 Barcelona', price: 1500, currency: 'USD', deposit: 3000, billsIncluded: false,
+    availableFrom: daysFromNow(35), minStayMonths: 12, bedrooms: 0, bathrooms: 1, sizeSqm: 40, furnished: true,
+    amenities: ['Wi-Fi', 'Air conditioning', 'Elevator', 'Gym', 'Security', 'Balcony'],
+    houseRules: ['No smoking', 'No parties'],
+    images: [img('photo-1545324418-cc1a3fa10c00'), img('photo-1502672023488-70e25813eb80')],
+    status: 'paused', featured: false, views: 205, createdAt: daysFromNow(-30),
+  },
+]
+
+const t = (d: number) => daysFromNow(d)
+
+export const SEED_APPLICATIONS: Application[] = [
+  {
+    id: 'a_1', listingId: 'l_1', renterId: 'u_renter1', ownerId: 'u_owner1',
+    proposedPrice: 1600, agreedPrice: 1600, moveInDate: t(20), stayMonths: 12,
+    message: 'Hi, I am relocating to Milan for a permanent engineering role and looking for a long-term home. Happy to sign for 12 months or longer.',
+    agreementAccepted: true, agreementAcceptedAt: t(-8),
+    verification: { idType: 'passport', idNumberMasked: '*****4821', idDocumentName: 'passport_jonas.pdf', selfieName: 'selfie.jpg', proofOfIncomeName: 'payslip_aug.pdf', submittedAt: t(-8) },
+    profile: { occupation: 'Software engineer', employer: 'Nordic Cloud AB', monthlyIncome: 6200, occupants: 1, hasPets: false, smoker: false, aboutMe: 'Quiet, tidy, and mostly working from the office. I enjoy cooking and cycling at weekends.', references: 'Previous landlord in Stockholm, available on request.' },
+    status: 'awaiting_fees',
+    timeline: [
+      { status: 'submitted', at: t(-8), by: 'renter' },
+      { status: 'under_review', at: t(-7), by: 'admin' },
+      { status: 'verified', at: t(-6), by: 'admin', note: 'ID and income verified. Strong candidate.' },
+      { status: 'sent_to_owner', at: t(-5), by: 'admin' },
+      { status: 'owner_accepted', at: t(-2), by: 'owner', note: 'Happy to proceed at 1,600.' },
+      { status: 'awaiting_fees', at: t(-2), by: 'system' },
+    ],
+    renterFee: 640, ownerFee: 560, renterFeePaid: false, ownerFeePaid: true, contactUnlocked: false, adminNotes: 'Owner already paid. Waiting on renter.', createdAt: t(-8),
+  },
+  {
+    id: 'a_2', listingId: 'l_2', renterId: 'u_renter3', ownerId: 'u_owner2',
+    proposedPrice: 1100, agreedPrice: 1100, moveInDate: t(10), stayMonths: 6,
+    message: 'Starting a new job in the City in two weeks. Looking for a friendly houseshare.',
+    agreementAccepted: true, agreementAcceptedAt: t(-3),
+    verification: { idType: 'driving_licence', idNumberMasked: '******9931', idDocumentName: 'licence_tom.jpg', selfieName: 'selfie_tom.jpg', submittedAt: t(-3) },
+    profile: { occupation: 'Junior analyst', employer: 'Barrow & Co', monthlyIncome: 3100, occupants: 1, hasPets: false, smoker: false, aboutMe: 'Sociable but respectful of shared spaces. Gym in the mornings, home most evenings.' },
+    status: 'under_review',
+    timeline: [
+      { status: 'submitted', at: t(-3), by: 'renter' },
+      { status: 'under_review', at: t(-2), by: 'admin' },
+    ],
+    renterFee: 550, ownerFee: 385, renterFeePaid: false, ownerFeePaid: false, contactUnlocked: false, adminNotes: '', createdAt: t(-3),
+  },
+  {
+    id: 'a_3', listingId: 'l_6', renterId: 'u_renter1', ownerId: 'u_owner2',
+    proposedPrice: 2400, agreedPrice: 2400, moveInDate: t(25), stayMonths: 12,
+    message: 'Interested in the river-view apartment as a backup option while I finalise my Milan move.',
+    agreementAccepted: true, agreementAcceptedAt: t(-6),
+    verification: { idType: 'passport', idNumberMasked: '*****4821', idDocumentName: 'passport_jonas.pdf', selfieName: 'selfie.jpg', proofOfIncomeName: 'payslip_aug.pdf', submittedAt: t(-6) },
+    profile: { occupation: 'Software engineer', employer: 'Nordic Cloud AB', monthlyIncome: 6200, occupants: 1, hasPets: false, smoker: false, aboutMe: 'Quiet, tidy, and mostly working from the office.' },
+    status: 'owner_declined',
+    timeline: [
+      { status: 'submitted', at: t(-6), by: 'renter' },
+      { status: 'under_review', at: t(-6), by: 'admin' },
+      { status: 'verified', at: t(-5), by: 'admin' },
+      { status: 'sent_to_owner', at: t(-4), by: 'admin' },
+      { status: 'owner_declined', at: t(-1), by: 'owner', note: 'Went with a tenant who could move in sooner.' },
+    ],
+    renterFee: 960, ownerFee: 840, renterFeePaid: false, ownerFeePaid: false, contactUnlocked: false, adminNotes: '', createdAt: t(-6),
+  },
+  {
+    id: 'a_4', listingId: 'l_5', renterId: 'u_renter2', ownerId: 'u_owner1',
+    proposedPrice: 400, agreedPrice: 400, moveInDate: t(5), stayMonths: 5,
+    message: 'Master student at Politecnico from September. Looking for a semester contract.',
+    agreementAccepted: true, agreementAcceptedAt: t(-1),
+    verification: { idType: 'national_id', idNumberMasked: '****2210', idDocumentName: 'id_priya.png', selfieName: 'selfie_priya.png', submittedAt: t(-1) },
+    profile: { occupation: 'Student', employer: 'Politecnico di Milano', monthlyIncome: 1200, occupants: 1, hasPets: false, smoker: false, aboutMe: 'Studying architecture. I keep regular hours and like a clean kitchen.', references: 'Parents act as guarantors.' },
+    status: 'submitted',
+    timeline: [{ status: 'submitted', at: t(-1), by: 'renter' }],
+    renterFee: 200, ownerFee: 140, renterFeePaid: false, ownerFeePaid: false, contactUnlocked: false, adminNotes: '', createdAt: t(-1),
+  },
+  {
+    id: 'a_5', listingId: 'l_3', renterId: 'u_renter3', ownerId: 'u_owner1',
+    proposedPrice: 890, agreedPrice: 890, moveInDate: t(-40), stayMonths: 12,
+    message: 'Looking for a base in Berlin for a year.',
+    agreementAccepted: true, agreementAcceptedAt: t(-60),
+    verification: { idType: 'driving_licence', idNumberMasked: '******9931', idDocumentName: 'licence_tom.jpg', selfieName: 'selfie_tom.jpg', submittedAt: t(-60) },
+    profile: { occupation: 'Junior analyst', monthlyIncome: 3100, occupants: 1, hasPets: false, smoker: false, aboutMe: 'Sociable but respectful.' },
+    status: 'completed',
+    timeline: [
+      { status: 'submitted', at: t(-60), by: 'renter' },
+      { status: 'under_review', at: t(-59), by: 'admin' },
+      { status: 'verified', at: t(-58), by: 'admin' },
+      { status: 'sent_to_owner', at: t(-57), by: 'admin' },
+      { status: 'owner_accepted', at: t(-55), by: 'owner' },
+      { status: 'awaiting_fees', at: t(-55), by: 'system' },
+      { status: 'contact_unlocked', at: t(-53), by: 'system' },
+      { status: 'completed', at: t(-45), by: 'admin', note: 'Contract signed, keys handed over.' },
+    ],
+    renterFee: 445, ownerFee: 312, renterFeePaid: true, ownerFeePaid: true, contactUnlocked: true, adminNotes: 'Smooth deal.', createdAt: t(-60),
+  },
+]
+
+export const SEED_MESSAGES: Message[] = [
+  { id: 'm_1', applicationId: 'a_5', fromId: 'u_owner1', text: 'Hi Tom, great to be connected. When would you like to view the studio?', at: t(-53) },
+  { id: 'm_2', applicationId: 'a_5', fromId: 'u_renter3', text: 'Hello Marco! Thursday afternoon works well for me.', at: t(-53) },
+  { id: 'm_3', applicationId: 'a_5', fromId: 'u_owner1', text: 'Perfect, see you at 3pm. I will bring the contract draft.', at: t(-52) },
+]
+
+export const SEED_REVIEWS: Review[] = [
+  { id: 'r_1', applicationId: 'a_5', fromId: 'u_renter3', toId: 'u_owner1', rating: 5, text: 'Marco was responsive and the studio was exactly as described.', at: t(-30) },
+  { id: 'r_2', applicationId: 'a_5', fromId: 'u_owner1', toId: 'u_renter3', rating: 5, text: 'Tom pays on time and keeps the place spotless. Would rent to again.', at: t(-28) },
+]
+
+export const SEED_NOTIFICATIONS: Notification[] = [
+  { id: 'n_1', userId: 'u_renter1', title: 'Owner accepted your application', body: 'Marco accepted your offer for the Navigli apartment. Pay the service fee to unlock contact.', link: '/dashboard/applications/a_1', read: false, at: t(-2) },
+  { id: 'n_2', userId: 'u_renter1', title: 'Owner declined', body: 'The Canary Wharf owner chose another tenant this time.', link: '/dashboard/applications/a_3', read: true, at: t(-1) },
+  { id: 'n_3', userId: 'u_owner1', title: 'New verified applicant', body: 'A verified renter is waiting for your decision on the Navigli apartment.', link: '/owner/applications/a_1', read: false, at: t(-5) },
+  { id: 'n_4', userId: 'u_admin', title: 'New application to verify', body: 'Priya Nair applied for the Città Studi shared room.', link: '/admin/verification', read: false, at: t(-1) },
+  { id: 'n_5', userId: 'u_admin', title: 'Listing pending review', body: 'Aisha submitted "Ensuite room in quiet Islington flatshare".', link: '/admin/listings', read: false, at: t(-1) },
+]
