@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Building2, KeyRound, Lock, Mail, ShieldCheck, UserCheck } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { Button, Input } from '@/components/ui'
-import { dashboardPath } from '@/components/layout/Navbar'
+import { dashboardPath } from '@/lib/paths'
 import { AuthBrandPanel } from '@/components/listings/AuthBrandPanel'
 import type { Role } from '@/types'
 

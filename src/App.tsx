@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { LayoutDashboard, FileText, Heart, UserCircle, Building2, Users, ShieldCheck, ListChecks, Settings, Inbox, MessageSquare } from 'lucide-react'
 import { DashboardLayout, PublicLayout, RequireRole } from '@/components/layout/Layouts'
@@ -6,38 +6,46 @@ import { Toaster } from '@/components/ui'
 import { useStore } from '@/store/useStore'
 
 // Public
-import HomePage from '@/pages/public/HomePage'
-import ListingsPage from '@/pages/public/ListingsPage'
-import ListingDetailPage from '@/pages/public/ListingDetailPage'
-import HowItWorksPage from '@/pages/public/HowItWorksPage'
-import PricingPage from '@/pages/public/PricingPage'
-import OwnersLandingPage from '@/pages/public/OwnersLandingPage'
-import NotFoundPage from '@/pages/public/NotFoundPage'
+const HomePage = lazy(() => import('@/pages/public/HomePage'))
+const ListingsPage = lazy(() => import('@/pages/public/ListingsPage'))
+const ListingDetailPage = lazy(() => import('@/pages/public/ListingDetailPage'))
+const HowItWorksPage = lazy(() => import('@/pages/public/HowItWorksPage'))
+const PricingPage = lazy(() => import('@/pages/public/PricingPage'))
+const OwnersLandingPage = lazy(() => import('@/pages/public/OwnersLandingPage'))
+const NotFoundPage = lazy(() => import('@/pages/public/NotFoundPage'))
 // Auth
-import LoginPage from '@/pages/auth/LoginPage'
-import SignupPage from '@/pages/auth/SignupPage'
+const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
+const SignupPage = lazy(() => import('@/pages/auth/SignupPage'))
 // Renter
-import ApplyPage from '@/pages/renter/ApplyPage'
-import RenterOverviewPage from '@/pages/renter/RenterOverviewPage'
-import RenterApplicationsPage from '@/pages/renter/RenterApplicationsPage'
-import RenterApplicationDetailPage from '@/pages/renter/RenterApplicationDetailPage'
-import SavedListingsPage from '@/pages/renter/SavedListingsPage'
-import RenterProfilePage from '@/pages/renter/RenterProfilePage'
-import MessagesPage from '@/pages/renter/MessagesPage'
+const ApplyPage = lazy(() => import('@/pages/renter/ApplyPage'))
+const RenterOverviewPage = lazy(() => import('@/pages/renter/RenterOverviewPage'))
+const RenterApplicationsPage = lazy(() => import('@/pages/renter/RenterApplicationsPage'))
+const RenterApplicationDetailPage = lazy(() => import('@/pages/renter/RenterApplicationDetailPage'))
+const SavedListingsPage = lazy(() => import('@/pages/renter/SavedListingsPage'))
+const RenterProfilePage = lazy(() => import('@/pages/renter/RenterProfilePage'))
+const MessagesPage = lazy(() => import('@/pages/renter/MessagesPage'))
 // Owner
-import OwnerOverviewPage from '@/pages/owner/OwnerOverviewPage'
-import OwnerListingsPage from '@/pages/owner/OwnerListingsPage'
-import ListingFormPage from '@/pages/owner/ListingFormPage'
-import OwnerApplicantsPage from '@/pages/owner/OwnerApplicantsPage'
-import OwnerApplicationDetailPage from '@/pages/owner/OwnerApplicationDetailPage'
+const OwnerOverviewPage = lazy(() => import('@/pages/owner/OwnerOverviewPage'))
+const OwnerListingsPage = lazy(() => import('@/pages/owner/OwnerListingsPage'))
+const ListingFormPage = lazy(() => import('@/pages/owner/ListingFormPage'))
+const OwnerApplicantsPage = lazy(() => import('@/pages/owner/OwnerApplicantsPage'))
+const OwnerApplicationDetailPage = lazy(() => import('@/pages/owner/OwnerApplicationDetailPage'))
 // Admin
-import AdminOverviewPage from '@/pages/admin/AdminOverviewPage'
-import AdminVerificationPage from '@/pages/admin/AdminVerificationPage'
-import AdminApplicationsPage from '@/pages/admin/AdminApplicationsPage'
-import AdminApplicationDetailPage from '@/pages/admin/AdminApplicationDetailPage'
-import AdminListingsPage from '@/pages/admin/AdminListingsPage'
-import AdminUsersPage from '@/pages/admin/AdminUsersPage'
-import AdminSettingsPage from '@/pages/admin/AdminSettingsPage'
+const AdminOverviewPage = lazy(() => import('@/pages/admin/AdminOverviewPage'))
+const AdminVerificationPage = lazy(() => import('@/pages/admin/AdminVerificationPage'))
+const AdminApplicationsPage = lazy(() => import('@/pages/admin/AdminApplicationsPage'))
+const AdminApplicationDetailPage = lazy(() => import('@/pages/admin/AdminApplicationDetailPage'))
+const AdminListingsPage = lazy(() => import('@/pages/admin/AdminListingsPage'))
+const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage'))
+const AdminSettingsPage = lazy(() => import('@/pages/admin/AdminSettingsPage'))
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" />
+    </div>
+  )
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -85,6 +93,7 @@ function AdminShell() {
         { to: '/admin/applications', label: 'Deal pipeline', icon: ListChecks },
         { to: '/admin/listings', label: 'Listings', icon: Inbox, badge: toModerate },
         { to: '/admin/users', label: 'Users', icon: Users },
+        { to: '/admin/messages', label: 'Messages', icon: MessageSquare },
         { to: '/admin/settings', label: 'Fees & settings', icon: Settings },
       ]} />
     </RequireRole>
@@ -95,6 +104,7 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
+      <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route element={<PublicLayout />}>
           <Route path="/" element={<HomePage />} />
@@ -136,10 +146,12 @@ export default function App() {
           <Route path="applications/:id" element={<AdminApplicationDetailPage />} />
           <Route path="listings" element={<AdminListingsPage />} />
           <Route path="users" element={<AdminUsersPage />} />
+          <Route path="messages" element={<MessagesPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Route>
       </Routes>
+      </Suspense>
       <Toaster />
     </>
   )

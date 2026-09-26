@@ -4,12 +4,7 @@ import { Bell, ChevronDown, LogOut, Menu, X, LayoutDashboard, Home } from 'lucid
 import { useCurrentUser, useStore, useUnreadCount } from '@/store/useStore'
 import { Avatar, Button } from '@/components/ui'
 import { cn, timeAgo } from '@/lib/utils'
-
-export function dashboardPath(role?: string) {
-  if (role === 'admin') return '/admin'
-  if (role === 'owner') return '/owner'
-  return '/dashboard'
-}
+import { dashboardPath } from '@/lib/paths'
 
 export function Logo({ light }: { light?: boolean }) {
   return (

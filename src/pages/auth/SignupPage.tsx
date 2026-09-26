@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Building2, CheckCircle2, HandCoins, KeyRound, Lock, Mail, Phone, User as UserIcon, UserCheck } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { Button, Input } from '@/components/ui'
-import { dashboardPath } from '@/components/layout/Navbar'
+import { dashboardPath } from '@/lib/paths'
 import { AuthBrandPanel } from '@/components/listings/AuthBrandPanel'
 import { cn } from '@/lib/utils'
 
