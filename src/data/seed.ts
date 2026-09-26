@@ -41,7 +41,7 @@ export const SEED_LISTINGS: Listing[] = [
     amenities: ['Wi-Fi', 'Heating', 'Elevator', 'Bike storage'],
     houseRules: ['No smoking', 'No parties'],
     images: [img('photo-1536376072261-38c75010e6c9'), img('photo-1493809842364-78817add7ffb')],
-    status: 'active', featured: false, views: 190, createdAt: daysFromNow(-9),
+    status: 'rented', featured: false, views: 190, createdAt: daysFromNow(-70),
   },
   {
     id: 'l_4', ownerId: 'u_owner2', title: 'Family house with garden in Richmond', type: 'house',
