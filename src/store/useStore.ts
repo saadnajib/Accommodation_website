@@ -191,7 +191,7 @@ export const useStore = create<State>()(
           case 'owner_accepted':
             s.advanceApplication(id, 'awaiting_fees', 'system')
             s.notify(a.renterId, 'Owner accepted your application', `Pay the service fee to unlock contact for "${title}".`, renterLink)
-            s.notify('u_admin', 'Owner accepted', `Owner accepted ${a.renterId} for "${title}". Fees pending.`, `/admin/applications/${a.id}`)
+            s.notify('u_admin', 'Owner accepted', `Owner accepted ${s.users.find((u) => u.id === a.renterId)?.name ?? 'the renter'} for "${title}". Fees pending.`, `/admin/applications/${a.id}`)
             break
           case 'owner_declined':
             s.notify(a.renterId, 'Owner declined', `The owner of "${title}" chose another tenant this time.`, renterLink)
