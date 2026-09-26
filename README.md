@@ -1,32 +1,72 @@
-# React + TypeScript + Vite
+# StayBridge
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A managed accommodation-rental marketplace built with React. Owners post ads, renters apply, and the StayBridge admin team sits in the middle: it verifies renters, negotiates with owners, collects a service fee from both sides, and only then unlocks direct contact.
 
-Currently, two official plugins are available:
+## Business model
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Revenue line | How it works |
+| --- | --- |
+| Renter service fee | A percentage of one month's rent, charged only after the owner accepts the renter. |
+| Owner success fee | A percentage of one month's rent, charged only when a tenant is placed. |
+| Verified Tenant Pass | One-off purchase: pre-verified profile, priority review, and a discount on every service fee. |
+| Featured listing | Paid 30-day boost that puts a listing first in search and on the home page. |
 
-## React Compiler
+Fees are configurable in the admin console under **Fees & settings**.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Workflow
 
-## Expanding the Oxlint configuration
+1. Renter proposes a price, accepts the accommodation agreement, uploads ID, and fills a self-profile.
+2. Admin reviews and verifies the renter.
+3. Admin presents the renter to the owner. The owner accepts or declines.
+4. Both sides pay the service fee.
+5. Contact is unlocked: in-app messaging, phone, email, and the exact address.
+6. Owner confirms the contract is signed. Both sides leave a review.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Roles
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+| Role | Entry point | Demo account |
+| --- | --- | --- |
+| Renter | `/dashboard` | `jonas@staybridge.demo` |
+| Owner | `/owner` | `marco@staybridge.demo` |
+| Admin | `/admin` | `admin@staybridge.demo` |
+
+Sign in is by email only. All data lives in the browser (`localStorage`) so the demo works without a backend. Use **Reset demo data** in the admin settings to start over.
+
+## Stack
+
+- React 19, TypeScript, Vite
+- Tailwind CSS v4
+- React Router v7
+- Zustand (persisted store)
+- lucide-react icons
+
+## Run it
+
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+```bash
+npm run build   # type-check and production build
+npm run lint
+```
+
+## Project layout
+
+```
+src/
+  types/        domain model
+  data/seed.ts  demo users, listings, applications
+  store/        zustand store: state, actions, selectors
+  lib/          fees, status labels, utilities
+  components/   ui kit, layout shells, per-area components
+  pages/        public, auth, renter, owner, admin
+```
+
+## Next steps for production
+
+- Replace the store with a real API and database. The store's action signatures map directly to endpoints.
+- Real file upload and ID verification (for example a KYC provider).
+- Payment provider for fees and Tenant Pass purchases.
+- Email and push notifications.
