@@ -119,8 +119,8 @@ export function Checkbox({ label, className, description, ...rest }: InputHTMLAt
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex items-center gap-3">
-      <span className={cn('relative h-6 w-11 rounded-full transition-colors', checked ? 'bg-brand-600' : 'bg-ink-200')}>
-        <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+      <span className={cn('relative block h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors', checked ? 'bg-brand-600' : 'bg-ink-200')}>
+        <span className={cn('absolute left-0.5 top-0.5 block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200', checked ? 'translate-x-5' : 'translate-x-0')} />
       </span>
       {label && <span className="text-sm font-medium text-ink-700">{label}</span>}
     </button>

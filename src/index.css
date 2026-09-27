@@ -40,7 +40,7 @@
     @apply bg-ink-50 text-ink-900 font-sans antialiased;
   }
   h1, h2, h3, .font-display { font-family: var(--font-display); letter-spacing: -0.01em; }
-  ::selection { background: var(--color-brand-200); }
+  ::selection { background: var(--color-brand-700); color: #fff; }
   input, select, textarea, button { font: inherit; }
 }
 
