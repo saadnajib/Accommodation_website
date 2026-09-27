@@ -9,7 +9,6 @@ import { forbidden, notFound } from '../lib/errors.js'
 import { serializeAdminUser, serializeListing } from '../lib/serialize.js'
 import { audit, auditAs } from '../lib/audit.js'
 import { clearSession } from '../lib/session.js'
-import { now } from '../lib/crypto.js'
 import { DEFAULT_FEES, getFees, setFees } from '../lib/fees.js'
 import { env } from '../lib/env.js'
 import { absolutePath } from '../lib/files.js'
@@ -18,7 +17,8 @@ import { APPLICATION_STATUSES } from '../lib/stateMachine.js'
 import { bootstrap } from '../bootstrap.js'
 import { seedDemo } from '../seed.js'
 import { getListingById, getUserById, idParams, idSchema, likeCol, ratingFor } from './common.js'
-import { LISTING_STATUSES, expireFeatured, notifyListingModeration } from './listings.js'
+import { LISTING_STATUSES, expireFeatured } from './listings.js'
+import { moderateListing } from '../lib/listingModeration.js'
 
 export const adminRouter = Router()
 adminRouter.use('/admin', requireRole('admin'))
@@ -50,11 +50,15 @@ adminRouter.get('/admin/overview', (_req, res) => {
     .innerJoin(L, eq(L.id, A.listingId))
     .orderBy(desc(E.at), desc(sql`${E}.rowid`)).limit(15).all()
 
+  const pendingApprovals = db.select({ n: sql<number>`count(*)` }).from(schema.agentProposals).where(eq(schema.agentProposals.status, 'pending')).get()?.n ?? 0
+
   res.json({
     revenueCollected,
     revenuePending,
     purchasesCollected,
+    pendingApprovals,
     counts: {
+      pendingApprovals,
       toVerify: pipeline.submitted + pipeline.under_review,
       readyToSend: pipeline.verified,
       waitingOnOwner: pipeline.sent_to_owner,
@@ -135,24 +139,7 @@ adminRouter.patch('/admin/listings/:id', validate(idParams, 'params'), validate(
   const body = v<z.infer<typeof moderateSchema>>(req)
   const l = getListingById(id)
   if (!l) throw notFound()
-  const patch: Partial<typeof schema.listings.$inferSelect> = { updatedAt: now() }
-  if (body.status) {
-    patch.status = body.status
-    if (body.status === 'rejected') patch.rejectionReason = body.rejectionReason || null
-    if (body.status === 'active' || body.status === 'pending_review') patch.rejectionReason = null
-  } else if (body.rejectionReason !== undefined) {
-    patch.rejectionReason = body.rejectionReason || null
-  }
-  if (body.featured !== undefined) {
-    patch.featured = body.featured
-    // Admin-granted features don't expire; paid ones keep their end date.
-    if (!body.featured) patch.featuredUntil = null
-    else if (!(l.featuredUntil && new Date(l.featuredUntil) > new Date())) patch.featuredUntil = null
-  }
-  db.update(schema.listings).set(patch).where(eq(schema.listings.id, id)).run()
-  const fresh = getListingById(id)!
-  audit(req, 'listing.moderate', id, { from: l.status, ...body })
-  if (body.status && body.status !== l.status) notifyListingModeration(fresh, body.status, fresh.rejectionReason)
+  const fresh = moderateListing(l, body, req.user!.id, req.ip)
   res.json({ listing: serializeListing(fresh, req.user) })
 })
 
@@ -196,6 +183,7 @@ export async function resetDemoData() {
   const stored = db.select({ path: schema.files.storagePath }).from(schema.files).all()
   db.transaction(() => {
     for (const t of [
+      schema.agentProposals, schema.agentRuns,
       schema.auditLog, schema.notifications, schema.savedListings, schema.reviews, schema.messages, schema.payments,
       schema.applicationEvents, schema.applications, schema.purchases, schema.listings, schema.files, schema.sessions,
       schema.settings, schema.users,

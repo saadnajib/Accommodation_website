@@ -39,6 +39,14 @@ This document lists the security controls in StayBridge and what is still requir
 - SQLite through Drizzle ORM with parameterized queries only. Foreign keys are on and writes that span tables run in transactions.
 - Payments, purchases, application events, and the audit log are append-only tables that record who did what and when.
 
+## AI employees
+
+- Employees never call mutating code directly. Every decision becomes a proposal, and only the policy engine or an admin approval can execute it, through the same server code and state machine the admin UI uses.
+- Money actions (recording a payment, changing fees) can never be set to automatic. The server rejects such a policy change and the executor refuses them when the actor is an agent.
+- Untrusted text (listing descriptions, renter messages, names) is passed to the model as data inside JSON with an explicit instruction to treat it as data. Decisions naming ids that were not in the batch are ignored.
+- A monthly spend cap skips runs once reached. Every run records tokens and cost, and every proposal keeps its rationale and confidence for audit.
+- The API key lives only in the server environment. The client never talks to Anthropic.
+
 ## Configuration
 
 - Secrets come from environment variables. `.env` is git-ignored and the server refuses to start in production with the default session secret.

@@ -8,6 +8,7 @@ import { db, schema } from '../db/index.js'
 import { newId, now } from './crypto.js'
 import { auditAs, notify, notifyAdmins } from './audit.js'
 import { HttpError } from './errors.js'
+import { computeFees, getFees } from './fees.js'
 
 type Application = typeof schema.applications.$inferSelect
 export type Actor = 'renter' | 'owner' | 'admin' | 'system'
@@ -156,4 +157,21 @@ export function recordFeePayment(app: Application, side: 'renter' | 'owner', opt
     }
     return fresh
   })
+}
+
+/**
+ * Change the agreed rent and recompute both fees. Locked once any fee is paid, contact is unlocked, or the application
+ * is closed. Shared by PATCH /applications/:id/price and the AI employees' executor.
+ */
+export function setAgreedPrice(app: Application, agreedPrice: number, actorId: string | null, ip?: string | null): Application {
+  const a = db.select().from(schema.applications).where(eq(schema.applications.id, app.id)).get()
+  if (!a) throw new HttpError(404, 'Not found', 'not_found')
+  if (a.renterFeePaid || a.ownerFeePaid || a.contactUnlocked || TERMINAL_STATUSES.has(a.status)) {
+    throw new HttpError(409, 'The price is locked once a fee has been paid or the application is closed', 'conflict')
+  }
+  const renter = db.select({ hasTenantPass: schema.users.hasTenantPass }).from(schema.users).where(eq(schema.users.id, a.renterId)).get()
+  const fees = computeFees(agreedPrice, getFees(), { hasTenantPass: renter?.hasTenantPass })
+  db.update(schema.applications).set({ agreedPrice, ...fees, updatedAt: now() }).where(eq(schema.applications.id, a.id)).run()
+  auditAs(actorId, 'application.price', a.id, { from: a.agreedPrice, to: agreedPrice }, ip)
+  return db.select().from(schema.applications).where(eq(schema.applications.id, a.id)).get()!
 }

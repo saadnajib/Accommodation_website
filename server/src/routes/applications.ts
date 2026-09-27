@@ -12,9 +12,10 @@ import { audit, notifyAdmins } from '../lib/audit.js'
 import { newId, now } from '../lib/crypto.js'
 import { AGREEMENT_VERSION, computeFees, getFees } from '../lib/fees.js'
 import {
-  APPLICATION_STATUSES, TERMINAL_STATUSES, VERIFYING_STATUSES, allowedNext, recordFeePayment, roleMayTarget, transition,
+  APPLICATION_STATUSES, TERMINAL_STATUSES, VERIFYING_STATUSES, allowedNext, recordFeePayment, roleMayTarget, setAgreedPrice, transition,
 } from '../lib/stateMachine.js'
 import { assertOwnFile } from './files.js'
+import { agentEvents } from '../agents/events.js'
 import { cardBody, cardRef, dateString, getListingById, getUserById, idParams, idSchema, likeCol, listingSummary, loadApplicationFor } from './common.js'
 
 export const applicationsRouter = Router()
@@ -91,6 +92,7 @@ applicationsRouter.post('/applications', requireRole('renter'), validate(submitS
     notifyAdmins('New application to verify', `${renter.name} applied for "${listing.title}".`, '/admin/verification')
     audit(req, 'application.submit', row.id, { listingId: listing.id })
   })
+  agentEvents.emit('application.submitted', row.id)
   res.status(201).json({ application: serializeApplication(row, renter) })
 })
 
@@ -213,13 +215,7 @@ const priceSchema = z.object({ agreedPrice: z.number().int().min(1).max(10_000_0
 applicationsRouter.patch('/applications/:id/price', requireRole('admin'), validate(idParams, 'params'), validate(priceSchema), (req, res) => {
   const { agreedPrice } = v<z.infer<typeof priceSchema>>(req)
   const a = loadApplicationFor(req.user!, v<{ id: string }>(req, 'params').id)
-  if (a.renterFeePaid || a.ownerFeePaid || a.contactUnlocked || TERMINAL_STATUSES.has(a.status)) {
-    throw conflict('The price is locked once a fee has been paid or the application is closed')
-  }
-  const renter = getUserById(a.renterId)!
-  const fees = computeFees(agreedPrice, getFees(), { hasTenantPass: renter.hasTenantPass })
-  db.update(schema.applications).set({ agreedPrice, ...fees, updatedAt: now() }).where(eq(schema.applications.id, a.id)).run()
-  audit(req, 'application.price', a.id, { from: a.agreedPrice, to: agreedPrice })
+  setAgreedPrice(a, agreedPrice, req.user!.id, req.ip)
   res.json({ application: serializeApplication(loadApplicationFor(req.user!, a.id), req.user!) })
 })
 

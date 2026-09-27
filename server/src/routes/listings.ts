@@ -6,15 +6,20 @@ import { validate, v } from '../middleware/validate.js'
 import { requireRole } from '../middleware/auth.js'
 import { badRequest, conflict, notFound } from '../lib/errors.js'
 import { serializeListing, serializeUser, OWNER_VISIBLE_STATUSES } from '../lib/serialize.js'
-import { audit, notify, notifyAdmins } from '../lib/audit.js'
+import { audit, notifyAdmins } from '../lib/audit.js'
 import { newId, now } from '../lib/crypto.js'
 import { getFees } from '../lib/fees.js'
 import { shouldCountView } from '../lib/views.js'
+import { notifyListingModeration } from '../lib/listingModeration.js'
+import { agentEvents } from '../agents/events.js'
 import {
   boolQuery, cardBody, dateString, getListingById, getUserById, idParams, likeCol, ratingFor, renterUnlockedListing,
 } from './common.js'
 
 export const listingsRouter = Router()
+
+/** Re-exported for existing importers; lives in lib/listingModeration.ts. */
+export { notifyListingModeration }
 
 export const LISTING_TYPES = ['room', 'studio', 'apartment', 'house', 'shared'] as const
 export const LISTING_STATUSES = ['draft', 'pending_review', 'active', 'paused', 'rented', 'rejected'] as const
@@ -179,7 +184,10 @@ listingsRouter.post('/listings', requireRole('owner'), validate(createSchema), (
   }
   db.insert(schema.listings).values(row).run()
   audit(req, 'listing.create', row.id, { status: row.status })
-  if (row.status === 'pending_review') notifyAdmins('Listing pending review', `"${row.title}" was submitted for review.`, '/admin/listings')
+  if (row.status === 'pending_review') {
+    notifyAdmins('Listing pending review', `"${row.title}" was submitted for review.`, '/admin/listings')
+    agentEvents.emit('listing.submitted', row.id)
+  }
   res.status(201).json({ listing: serializeListing(row, req.user) })
 })
 
@@ -188,12 +196,6 @@ const OWNER_STATUS_MOVES: Record<string, string[]> = {
   rejected: ['pending_review'],
   active: ['paused', 'rented'],
   paused: ['active', 'rented'],
-}
-
-/** Admin moderation side effects, shared with /admin/listings/:id. */
-export function notifyListingModeration(l: Listing, status: string, reason?: string | null) {
-  if (status === 'active') notify(l.ownerId, 'Listing approved', `"${l.title}" is now live.`, `/owner/listings/${l.id}/edit`)
-  if (status === 'rejected') notify(l.ownerId, 'Listing needs changes', reason || `"${l.title}" was not approved.`, `/owner/listings/${l.id}/edit`)
 }
 
 listingsRouter.patch('/listings/:id', requireRole('owner', 'admin'), validate(idParams, 'params'), validate(patchSchema), (req, res) => {
@@ -215,7 +217,10 @@ listingsRouter.patch('/listings/:id', requireRole('owner', 'admin'), validate(id
   db.update(schema.listings).set(patch).where(eq(schema.listings.id, l.id)).run()
   const fresh = getListingById(l.id)!
   audit(req, 'listing.update', l.id, { fields: Object.keys(body), from: l.status, to: fresh.status })
-  if (patch.status === 'pending_review') notifyAdmins('Listing pending review', `"${fresh.title}" was submitted for review.`, '/admin/listings')
+  if (patch.status === 'pending_review') {
+    notifyAdmins('Listing pending review', `"${fresh.title}" was submitted for review.`, '/admin/listings')
+    agentEvents.emit('listing.submitted', fresh.id)
+  }
   if (isAdmin && patch.status) notifyListingModeration(fresh, patch.status, fresh.rejectionReason)
   res.json({ listing: serializeListing(fresh, req.user) })
 })

@@ -57,7 +57,7 @@ Privacy is enforced server-side by `src/lib/serialize.ts`: renters never receive
 - `POST /me/tenant-pass` (renter) {card} → records purchase, hasTenantPass=true → {user}
 
 ## Admin
-- `GET /admin/overview` → {revenueCollected, revenuePending, counts:{toVerify, waitingOnOwner, awaitingFees, listingsPending, listingsLive, usersByRole}, pipeline:{[status]:count}, recentEvents:[{application:{id,renterName,listingTitle}, status, by, note, at}]}
+- `GET /admin/overview` → {revenueCollected, revenuePending, purchasesCollected, pendingApprovals, counts:{toVerify, readyToSend, waitingOnOwner, awaitingFees, completed, listingsPending, listingsLive, listingsFeatured, usersByRole, pendingApprovals}, pipeline:{[status]:count}, recentEvents:[{application:{id,renterName,listingTitle}, status, by, note, at}]}  (`pendingApprovals` = AI proposals with status pending)
 - `GET /admin/users?q&role` → {items:[FullUser + applicationsCount + listingsCount + rating]}
 - `PATCH /admin/users/:id/verification` {verification} (cannot change self) → {user}
 - `GET /admin/listings?status&q&owner` → {items:[Listing + owner name]}
@@ -65,3 +65,32 @@ Privacy is enforced server-side by `src/lib/serialize.ts`: renters never receive
 - `GET /admin/settings` → {fees}; `PUT /admin/settings` {fees} → {fees}
 - `GET /admin/audit?limit=100` → {items}
 - `POST /admin/reset-demo` (only when NODE_ENV!=='production') → wipes and reseeds → 204
+
+## AI employees (admin only)
+Design: `src/agents/README.md`. Four employees (`moderator` Maya, `verifier` Victor, `deals` Dana, `growth` Gabe) turn work items into **proposals**. Policy (`src/agents/actions.ts` defaults + CEO overrides) decides per proposal: `auto` and confidence ≥ threshold → executed immediately (`decidedBy:'policy'`); `approve` or below threshold → `pending` in the Approvals inbox; `never` → `pending` with `payload.adviceOnly:true` (approving only acknowledges, nothing executes). `application.mark_fee_paid` and `settings.fees` can never be set to `auto`. All routes require role admin (401 anonymous, 403 other roles). Every admin action here writes an audit row (`proposal.approve`, `proposal.reject`, `agent.run`, `agent.run_all`, `agent.enable`, `agent.policy`); every execution writes `agent.execute` with actor = admin id or `agent:<key>`.
+
+Types:
+- **Run** `{id, agentKey, agentName, trigger:'schedule'|'manual'|'event', status:'running'|'succeeded'|'failed'|'skipped', summary, itemsReviewed, proposalsCreated, autoExecuted, inputTokens, outputTokens, costCents, error:string|null, startedAt, finishedAt:string|null}`
+- **Agent** `{key, name, title, description, schedule:'cycle'|'daily', enabled, running, lastRun: {id, agentKey, agentName, trigger, status, summary, startedAt, finishedAt, itemsReviewed, proposalsCreated, autoExecuted, costCents}|null, pendingProposals}`
+- **PolicyAction** `{key, label, description, targetType, defaultAutonomy, autonomy:'auto'|'approve'|'never', autoMinConfidence, defaultAutoMinConfidence, locked:boolean}` (`locked` = can never be auto)
+- **Proposal** `{id, agentKey, agentName, action, actionLabel, targetType:'listing'|'application'|'user'|'settings'|'none', targetId:string|null, target:{title, link:string|null, status?}|null, payload:object, adviceOnly:boolean, rationale, confidence:0-100, risk:'low'|'medium'|'high', status:'pending'|'approved'|'rejected'|'executed'|'failed'|'expired', decidedBy:string|null (admin id or 'policy'), decidedByName:string|null, decidedAt:string|null, decisionNote:string|null, executedAt:string|null, result:string|null, runId:string|null, createdAt}`
+  - `target.link` is an in-app route: listing → `/admin/listings?tab=<status>`, application → `/admin/applications/:id`, user → `/admin/users`, settings → `/admin/settings`.
+  - Payload by action: `listing.approve` {flags[], escalated?}; `listing.reject` {rejectionReason, flags[]}; `listing.pause` {applicationId, daysWaiting}; `application.verify|reject` {checks:{docLegible,nameMatches,faceMatches,affordability,messageGenuine}, renterFacingReason? (reject), escalated?}; `application.set_price` {suggestedPrice, agreedPrice (same value), currentPrice, proposedPrice, askingPrice, currency}; `application.nudge` {to:'renter'|'owner', message}; `application.mark_fee_paid` {side}; `application.record_owner_decision` {decision:'accept'|'decline', note?}; `user.notify` {title, message, link?, listingId?}; `settings.fees` {fees:{renterFeeRate?,ownerFeeRate?,minFee?}, current}; `ceo.brief` {text ≤1200 chars}.
+  - An escalation is a normal action proposal with `confidence: 0` and rationale starting "Escalated:" (e.g. Maya escalating a listing = `listing.approve` at 0).
+  - Pending proposals older than 7 days become `expired`.
+
+Endpoints:
+- `GET /admin/agents` → {configured:boolean, model, intervalMinutes, budgetCents, spentThisMonthCents, agents:[Agent]}
+- `POST /admin/agents/:key/run` → runs that employee now (awaits the run, up to ~2 min) → {run: Run}. 404 unknown key; 409 if that employee is already running. Manual runs ignore the on/off switch and Gabe's once-a-day limit; they still respect "not configured" and the budget cap (→ run with status `skipped` and a summary).
+- `POST /admin/agents/run-all` → runs all four in order → {runs:[Run]}; 409 if a cycle is already running.
+- `PATCH /admin/agents/:key` {enabled:boolean} → {agent: Agent}
+- `GET /admin/agents/policy` → {actions:[PolicyAction]}
+- `PUT /admin/agents/policy` partial map of changed actions only {[actionKey]:{autonomy?, autoMinConfidence? (int 0-100)}} → {actions:[PolicyAction]} (full list). 400 for unknown keys or `auto` on a locked action.
+- `GET /admin/agents/runs?agent&limit=50 (≤200)` → {items:[Run]} newest first
+- `GET /admin/proposals?status=pending|all|<status>&agent&limit=100 (≤200)` → {items:[Proposal]} newest first (default status `pending`)
+- `GET /admin/proposals/:id` → {proposal: Proposal, run: Run|null}
+- `POST /admin/proposals/:id/approve` {note?} (body may be `{}` or empty) → {proposal} — executes through the same server code as the admin UI (state machine, listing moderation, notifications). On execution error the proposal comes back with `status:'failed'` and `result` = the message (HTTP 200). 409 if not pending.
+- `POST /admin/proposals/:id/reject` {note?} → {proposal}; 409 if not pending.
+- `POST /admin/proposals/bulk` {ids:[1..100], decision:'approve'|'reject', note?} → {results:[{id, ok:boolean, status?, result?, proposal?: Proposal, error?}]} (`ok:false` for failures or proposals that were not pending)
+
+Env: `ANTHROPIC_API_KEY` (unset → `configured:false`, no scheduler, runs are skipped), `AGENT_MODEL` (default `claude-opus-5`), `AGENT_INTERVAL_MINUTES` (default 10; 0 = no interval, event hooks only), `AGENT_MONTHLY_BUDGET_CENTS` (default 5000). New listings submitted for review and new applications wake Maya / Victor after a 30 s debounce.

@@ -5,6 +5,7 @@ import { messagesRouter } from './messages.js'
 import { reviewsRouter } from './reviews.js'
 import { meRouter } from './me.js'
 import { adminRouter } from './admin.js'
+import { agentsRouter } from './agents.js'
 
 // Domain routers are mounted here (each declares its full path under /api). See API.md for the contract.
 export const apiRouter = Router()
@@ -14,3 +15,4 @@ apiRouter.use(messagesRouter)
 apiRouter.use(reviewsRouter)
 apiRouter.use(meRouter)
 apiRouter.use(adminRouter)
+apiRouter.use(agentsRouter)
