@@ -3,7 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { LayoutDashboard, FileText, Heart, UserCircle, Building2, Users, ShieldCheck, ListChecks, Settings, Inbox, MessageSquare } from 'lucide-react'
 import { DashboardLayout, PublicLayout, RequireRole } from '@/components/layout/Layouts'
 import { Toaster } from '@/components/ui'
-import { useStore } from '@/store/useStore'
+import { useHydrated, useStore } from '@/store/useStore'
 
 // Public
 const HomePage = lazy(() => import('@/pages/public/HomePage'))
@@ -39,9 +39,9 @@ const AdminListingsPage = lazy(() => import('@/pages/admin/AdminListingsPage'))
 const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage'))
 const AdminSettingsPage = lazy(() => import('@/pages/admin/AdminSettingsPage'))
 
-function PageFallback() {
+function PageFallback({ fullScreen = false }: { fullScreen?: boolean }) {
   return (
-    <div className="flex min-h-[60vh] items-center justify-center">
+    <div className={fullScreen ? 'flex min-h-screen items-center justify-center' : 'flex min-h-[60vh] items-center justify-center'}>
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" />
     </div>
   )
@@ -101,6 +101,8 @@ function AdminShell() {
 }
 
 export default function App() {
+  const hydrated = useHydrated()
+  if (!hydrated) return <PageFallback fullScreen />
   return (
     <>
       <ScrollToTop />

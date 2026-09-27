@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Check, Clock, ImagePlus, Info, Lock, Plus, RotateCcw, Send, Star, Trash2, Wand2,
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Clock, ImagePlus, Info, Lock, RotateCcw, Send,
 } from 'lucide-react'
 import { useCurrentUser, useListing, useStore } from '@/store/useStore'
 import {
   Badge, Button, Card, CardBody, Input, Label, ListingStatusBadge, PageHeader, Select, Stepper, Textarea, Toggle,
 } from '@/components/ui'
 import { Chip, Thumb } from '@/components/owner/OwnerUi'
+import { PhotoUploader } from '@/components/owner/PhotoUploader'
 import { ListingPreviewCard } from '@/components/owner/ListingPreview'
 import {
-  MAX_PHOTOS, MIN_STAY_OPTIONS, STEPS, clearDraft, emptyForm, firstInvalidStep, formFromListing, isUrl, loadDraft, saveDraft,
+  MAX_PHOTOS, MIN_STAY_OPTIONS, STEPS, clearDraft, emptyForm, firstInvalidStep, formFromListing, loadDraft, saveDraft,
   stepValid, toListingInput, todayInput, validate, type ListingFormState,
 } from '@/components/owner/listingForm'
 import { SAMPLE_PHOTOS, propertyTypeLabel } from '@/components/owner/utils'
@@ -68,21 +69,17 @@ export default function ListingFormPage() {
   const toggleIn = (key: 'amenities' | 'houseRules', value: string) =>
     setForm((f) => ({ ...f, [key]: f[key].includes(value) ? f[key].filter((x) => x !== value) : [...f[key], value] }))
 
-  const setImage = (i: number, v: string) => setForm((f) => ({ ...f, images: f.images.map((x, j) => (j === i ? v : x)) }))
-  const addImage = () => setForm((f) => (f.images.length >= MAX_PHOTOS ? f : { ...f, images: [...f.images, ''] }))
-  const removeImage = (i: number) => setForm((f) => ({ ...f, images: f.images.length === 1 ? [''] : f.images.filter((_, j) => j !== i) }))
-  const makeCover = (i: number) => setForm((f) => ({ ...f, images: [f.images[i], ...f.images.filter((_, j) => j !== i)] }))
+  const setImages = (fn: (prev: string[]) => string[]) => setForm((f) => ({ ...f, images: fn(f.images) }))
   const addSamples = () => {
     setForm((f) => {
-      const existing = f.images.map((x) => x.trim()).filter(Boolean)
-      const fresh = SAMPLE_PHOTOS.filter((p) => !existing.includes(p)).slice(0, 3)
-      const images = [...existing, ...fresh].slice(0, MAX_PHOTOS)
-      return { ...f, images: images.length ? images : [''] }
+      const fresh = SAMPLE_PHOTOS.filter((p) => !f.images.includes(p)).slice(0, 3)
+      return { ...f, images: [...f.images, ...fresh].slice(0, MAX_PHOTOS) }
     })
     toast({ title: 'Sample photos added', body: 'Replace them with photos of your home before publishing for real.', tone: 'info' })
   }
 
   const next = () => {
+    if (step === 3) touch('images')
     if (!canNext) return
     setStep((s) => Math.min(s + 1, STEPS.length - 1))
   }
@@ -298,49 +295,11 @@ export default function ListingFormPage() {
 
           {step === 3 && (
             <div className="grid gap-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <StepTitle title="Photos" subtitle={`Add up to ${MAX_PHOTOS} photos. The first one is your cover.`} />
-                <Button variant="outline" size="sm" onClick={addSamples} disabled={photos.length >= MAX_PHOTOS}>
-                  <Wand2 className="h-4 w-4" /> Add sample photos
-                </Button>
-              </div>
-              <p className="flex items-start gap-2 rounded-xl bg-ink-50 px-3.5 py-2.5 text-xs text-ink-500">
-                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                This demo has no file storage, so paste public image URLs (e.g. from Unsplash) instead of uploading files.
-              </p>
-              <ul className="grid gap-3">
-                {form.images.map((url, i) => {
-                  const valid = isUrl(url)
-                  return (
-                    <li key={i} className="flex flex-col gap-3 rounded-xl border border-ink-200 p-3 sm:flex-row sm:items-center">
-                      <div className="relative shrink-0">
-                        <Thumb src={valid ? url.trim() : undefined} alt={`Photo ${i + 1} preview`} className="h-36 w-full sm:h-16 sm:w-24" />
-                        {i === 0 && valid && <span className="absolute left-1.5 top-1.5 rounded-md bg-ink-900/80 px-1.5 py-0.5 text-[10px] font-bold text-white">COVER</span>}
-                      </div>
-                      <Input
-                        className="min-w-0 flex-1" name={`image-${i}`} aria-label={`Photo ${i + 1} URL`} placeholder="https://images.unsplash.com/…"
-                        value={url} onChange={(e) => setImage(i, e.target.value)} error={url.trim() ? errors[`image-${i}`] : undefined}
-                      />
-                      <div className="flex shrink-0 gap-1.5">
-                        <Button variant="ghost" size="sm" onClick={() => makeCover(i)} disabled={i === 0 || !valid} aria-label={`Make photo ${i + 1} the cover`}>
-                          <Star className="h-4 w-4" /> <span className="sm:hidden lg:inline">Make cover</span>
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => removeImage(i)} aria-label={`Remove photo ${i + 1}`} className="text-red-600 hover:bg-red-50">
-                          <Trash2 className="h-4 w-4" /> <span className="sm:hidden">Remove</span>
-                        </Button>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Button variant="outline" size="sm" onClick={addImage} disabled={form.images.length >= MAX_PHOTOS}>
-                  <Plus className="h-4 w-4" /> Add photo URL
-                </Button>
-                <span className={cn('text-xs', errors.images ? 'text-red-600' : 'text-ink-400')}>
-                  {errors.images ?? `${photos.length}/${MAX_PHOTOS} photos`}
-                </span>
-              </div>
+              <StepTitle title="Photos" subtitle={`Add up to ${MAX_PHOTOS} photos. The first one is your cover.`} />
+              <PhotoUploader
+                images={form.images} max={MAX_PHOTOS} setImages={setImages} onUseSamples={addSamples}
+                error={photos.length > 0 || touched.has('images') ? errors.images : undefined}
+              />
             </div>
           )}
 
@@ -356,7 +315,7 @@ export default function ListingFormPage() {
                   }} />
                   {photos.length > 1 && (
                     <div className="mt-3 grid grid-cols-4 gap-2">
-                      {photos.slice(1, 5).map((p, i) => <Thumb key={p + i} src={p} alt={`Photo ${i + 2}`} className="aspect-square w-full rounded-lg" />)}
+                      {photos.slice(1, 5).map((p, i) => <Thumb key={i} src={p} alt={`Photo ${i + 2}`} className="aspect-square w-full rounded-lg" />)}
                     </div>
                   )}
                 </div>

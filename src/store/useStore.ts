@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { useSyncExternalStore } from 'react'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import type {
   Application, ApplicationStatus, FeeSettings, Listing, Message, Notification, RenterProfile,
@@ -8,6 +9,7 @@ import type {
 import { SEED_APPLICATIONS, SEED_LISTINGS, SEED_MESSAGES, SEED_NOTIFICATIONS, SEED_REVIEWS, SEED_USERS } from '@/data/seed'
 import { DEFAULT_FEES, computeFees } from '@/lib/fees'
 import { uid } from '@/lib/utils'
+import { idbStorage } from '@/lib/idbStorage'
 
 export interface Toast { id: string; title: string; body?: string; tone?: 'success' | 'error' | 'info' }
 
@@ -271,6 +273,7 @@ export const useStore = create<State>()(
     }),
     {
       name: 'staybridge:v1',
+      storage: createJSONStorage(() => idbStorage),
       partialize: (s) => ({
         users: s.users, listings: s.listings, applications: s.applications, messages: s.messages, reviews: s.reviews,
         notifications: s.notifications, savedListings: s.savedListings, fees: s.fees, currentUserId: s.currentUserId,
@@ -278,6 +281,16 @@ export const useStore = create<State>()(
     },
   ),
 )
+
+/* ---------- Hydration ---------- */
+
+// Persisted state loads asynchronously from IndexedDB; until then the store holds seed state
+// (currentUserId null), so route guards must wait for hydration.
+const subscribeHydration = (cb: () => void) => useStore.persist.onFinishHydration(cb)
+const getHydrated = () => useStore.persist.hasHydrated()
+
+/** True once persisted state has been restored from storage. */
+export const useHydrated = () => useSyncExternalStore(subscribeHydration, getHydrated, getHydrated)
 
 /* ---------- Selectors / hooks ---------- */
 

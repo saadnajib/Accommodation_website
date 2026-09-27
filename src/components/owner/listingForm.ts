@@ -44,7 +44,7 @@ export function emptyForm(): ListingFormState {
     title: '', type: '', description: '', city: '', area: '', address: '',
     bedrooms: '1', bathrooms: '1', sizeSqm: '', furnished: true, amenities: [], houseRules: [],
     price: '', deposit: '', depositTouched: false, billsIncluded: false, availableFrom: todayInput(), minStayMonths: 6,
-    images: [''],
+    images: [],
   }
 }
 
@@ -55,12 +55,14 @@ export function formFromListing(l: Listing): ListingFormState {
     amenities: [...l.amenities], houseRules: [...l.houseRules],
     price: String(l.price), deposit: String(l.deposit), depositTouched: true, billsIncluded: l.billsIncluded,
     availableFrom: l.availableFrom.slice(0, 10), minStayMonths: l.minStayMonths,
-    images: l.images.length ? [...l.images] : [''],
+    images: [...l.images],
   }
 }
 
 const isInt = (v: string) => /^\d+$/.test(v.trim())
 export const isUrl = (v: string) => /^https?:\/\/\S+\.\S+/i.test(v.trim())
+export const isDataImage = (v: string) => /^data:image\/[a-z0-9.+-]+;base64,/i.test(v)
+export const isPhoto = (v: string) => isUrl(v) || isDataImage(v)
 
 export function validate(f: ListingFormState): Record<string, string> {
   const e: Record<string, string> = {}
@@ -86,11 +88,9 @@ export function validate(f: ListingFormState): Record<string, string> {
   if (!f.availableFrom || Number.isNaN(new Date(f.availableFrom).getTime())) e.availableFrom = 'Pick the date the home is available.'
 
   const filled = f.images.map((x) => x.trim()).filter(Boolean)
-  f.images.forEach((url, i) => {
-    if (url.trim() && !isUrl(url)) e[`image-${i}`] = 'Enter a full image URL starting with https://'
-  })
   if (filled.length === 0) e.images = 'Add at least one photo.'
-  else if (f.images.some((u, i) => u.trim() && e[`image-${i}`])) e.images = 'Fix the invalid photo URLs.'
+  else if (filled.length > MAX_PHOTOS) e.images = `Use at most ${MAX_PHOTOS} photos.`
+  else if (filled.some((x) => !isPhoto(x))) e.images = 'Remove the photos that could not be loaded.'
   return e
 }
 
@@ -134,7 +134,7 @@ export function loadDraft(): { form: ListingFormState; step: number } | null {
     const parsed = JSON.parse(raw) as { form?: Partial<ListingFormState>; step?: number }
     if (!parsed.form) return null
     const form = { ...emptyForm(), ...parsed.form }
-    if (!Array.isArray(form.images) || form.images.length === 0) form.images = ['']
+    form.images = Array.isArray(form.images) ? form.images.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : []
     return { form, step: Math.min(Math.max(0, parsed.step ?? 0), STEPS.length - 1) }
   } catch {
     return null
@@ -142,7 +142,14 @@ export function loadDraft(): { form: ListingFormState; step: number } | null {
 }
 
 export function saveDraft(form: ListingFormState, step: number) {
-  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, step })) } catch { /* storage unavailable */ }
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, step }))
+  } catch {
+    // Uploaded photos (data URLs) can exceed the sessionStorage quota: keep the rest of the draft.
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form: { ...form, images: form.images.filter((x) => !isDataImage(x)) }, step }))
+    } catch { /* storage unavailable */ }
+  }
 }
 
 export function clearDraft() {
