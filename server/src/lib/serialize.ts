@@ -89,3 +89,27 @@ export function serializeApplication(a: Application, viewer: Viewer) {
 export function serializeFile(f: typeof schema.files.$inferSelect) {
   return { id: f.id, kind: f.kind, mime: f.mime, size: f.size, name: f.originalName, url: `/api/files/${f.id}`, createdAt: f.createdAt }
 }
+
+/** Full user record for the admin console (never the password hash). */
+export function serializeAdminUser(u: User) {
+  return { ...serializeMe(u), failedLogins: u.failedLogins, lockedUntil: u.lockedUntil ?? undefined }
+}
+
+export function serializeEvent(e: typeof schema.applicationEvents.$inferSelect, viewer: Viewer) {
+  return {
+    status: e.status, by: e.by, note: e.note ?? undefined, at: e.at,
+    ...(viewer?.role === 'admin' ? { actorId: e.actorId ?? undefined } : {}),
+  }
+}
+
+export function serializeMessage(m: typeof schema.messages.$inferSelect) {
+  return { id: m.id, applicationId: m.applicationId, fromId: m.fromId, text: m.text, at: m.at }
+}
+
+export function serializeReview(r: typeof schema.reviews.$inferSelect) {
+  return { id: r.id, applicationId: r.applicationId, fromId: r.fromId, toId: r.toId, rating: r.rating, text: r.text, at: r.at }
+}
+
+export function serializeNotification(n: typeof schema.notifications.$inferSelect) {
+  return { id: n.id, userId: n.userId, title: n.title, body: n.body, link: n.link ?? undefined, read: n.read, at: n.at }
+}
