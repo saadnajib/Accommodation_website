@@ -92,3 +92,25 @@ The defaults (50% renter, 35% owner) add up to 85% of a month's rent. That is hi
 - Never accept a renter you have not verified. One scammer costs you every owner in that city.
 - Keep notes on every record (the internal notes box). Your future self, or an employee, will need them.
 - Reset demo data is for testing only. It deletes everything. It is disabled in production.
+
+## 8. Running it as CEO with the AI team
+
+Four AI employees do the daily routine in sections 2 and 3 for you. You approve what matters.
+
+| Employee | Does on its own | Asks you first |
+| --- | --- | --- |
+| Maya, listing moderator | Approves clean listings | Rejections, pausing a listing, free featured slots |
+| Victor, verification officer | Starts reviews, verifies renters when documents and affordability are clear | Rejections, anything unclear |
+| Dana, deal manager | Presents verified renters to owners, sends reminders to slow owners and unpaid parties | Agreed price changes, recording owner decisions, completing or cancelling deals |
+| Gabe, growth analyst | Sends featured-listing offers to owners, writes your daily brief | Fee changes (advice only) |
+
+Nobody on the AI team can record a payment or unlock contact. That stays with you.
+
+**Your daily loop as CEO (about 5 minutes):**
+1. Read the daily brief in your notifications.
+2. Open **Admin → Approvals**. Each card shows the employee's reasoning and a confidence score. Approve, reject with a note, or approve in bulk.
+3. Record any offline payments you received on the application record.
+
+**Tuning the team:** Admin → AI team. Turn employees on or off, run one immediately, and edit the policy table: which actions run automatically, which need your approval, and the confidence below which an automatic action is escalated to you instead. Start strict, loosen as you trust the results. The page shows spend against the monthly budget cap.
+
+**Setup:** put `ANTHROPIC_API_KEY` in `server/.env`, optionally change `AGENT_MODEL`, `AGENT_INTERVAL_MINUTES`, and `AGENT_MONTHLY_BUDGET_CENTS`, then restart the server.
