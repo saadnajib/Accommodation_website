@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight, Banknote, Clock, Hourglass, Inbox, ListChecks, Send, ShieldCheck, Store, Users, Wallet, HandCoins, CircleCheck,
+  ArrowRight, Banknote, Bot, CheckSquare, KeyRound, Clock, Hourglass, Inbox, ListChecks, Send, ShieldCheck, Store, Users, Wallet, HandCoins, CircleCheck,
 } from 'lucide-react'
 import { ApplicationStatusBadge, Card, CardBody, CardHeader, EmptyState, PageHeader, Stat } from '@/components/ui'
+import { AgentAvatar, RunStatusBadge } from '@/components/admin/agents'
 import { useAdminListings, useLoad, useMyApplications, useStore } from '@/store/useStore'
 import { APPLICATION_STATUS, PIPELINE } from '@/lib/status'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
@@ -21,6 +22,9 @@ export default function AdminOverviewPage() {
   const fetchAdminOverview = useStore((s) => s.fetchAdminOverview)
   const fetchMyApplications = useStore((s) => s.fetchMyApplications)
   const fetchAdminListings = useStore((s) => s.fetchAdminListings)
+  const fetchAgents = useStore((s) => s.fetchAgents)
+  // The AI team card is optional: never toast if the agents API is unavailable.
+  useEffect(() => { void fetchAgents({ quiet: true }).catch(() => {}) }, [fetchAgents])
   const { loading } = useLoad(
     () => Promise.all([fetchAdminOverview(), fetchMyApplications(), fetchAdminListings({ status: 'pending_review' })]),
     [fetchAdminOverview, fetchMyApplications, fetchAdminListings],
@@ -85,8 +89,14 @@ export default function AdminOverviewPage() {
       items.push({ key: `l-${l.id}`, to: '/admin/listings', icon: Store, tone: 'bg-amber-50 text-amber-700',
         title: `Moderate listing “${l.title}”`, sub: `${usersById[l.ownerId]?.name ?? l.ownerName ?? 'Owner'} · ${l.city}`, age: timeAgo(l.createdAt), sortAt: l.createdAt })
     }
-    return items.sort((a, b) => a.sortAt.localeCompare(b.sortAt))
-  }, [applications, pendingListings, usersById, summaries])
+    items.sort((a, b) => a.sortAt.localeCompare(b.sortAt))
+    const pendingApprovals = overview?.pendingApprovals ?? 0
+    if (pendingApprovals > 0) {
+      items.unshift({ key: 'approvals', to: '/admin/approvals', icon: CheckSquare, tone: 'bg-violet-50 text-violet-700',
+        title: `Review ${pendingApprovals} AI proposal${pendingApprovals === 1 ? '' : 's'}`, sub: 'Your AI team is waiting for a decision', age: 'now', sortAt: '' })
+    }
+    return items
+  }, [applications, pendingListings, usersById, summaries, overview?.pendingApprovals])
 
   const activity = (overview?.recentEvents ?? []).slice(0, 10)
 
@@ -112,6 +122,8 @@ export default function AdminOverviewPage() {
         <MiniStat label="Live listings" value={m.liveListings} sub={`${m.featured} featured`} to="/admin/listings" />
         <MiniStat label="Users" value={m.users} sub={`${m.roles.renter} renters · ${m.roles.owner} owners · ${m.roles.admin} admin`} to="/admin/users" />
       </div>
+
+      <AiTeamCard />
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5">
         <Card className="xl:col-span-3">
@@ -196,6 +208,55 @@ export default function AdminOverviewPage() {
         <QuickLink to="/admin/users" icon={Users}>Users</QuickLink>
       </div>
     </div>
+  )
+}
+
+function AiTeamCard() {
+  const info = useStore((s) => s.agentsOverview)
+  const pending = useStore((s) => s.adminOverview?.pendingApprovals) ?? info?.agents.reduce((n, a) => n + (a.pendingProposals ?? 0), 0) ?? 0
+  if (!info) return null
+  return (
+    <Card className="mt-6">
+      <div className="flex flex-col gap-4 p-5 md:flex-row md:items-stretch">
+        <div className="flex shrink-0 items-center gap-4 md:w-64 md:flex-col md:items-start md:justify-between md:border-r md:border-ink-100 md:pr-5">
+          <div className="flex items-center gap-3">
+            <span className="rounded-xl bg-violet-50 p-2.5 text-violet-700"><Bot className="h-5 w-5" /></span>
+            <div>
+              <p className="text-sm font-medium text-ink-500">AI team approvals</p>
+              <p className="text-2xl font-bold tabular-nums text-ink-900">{pending}</p>
+            </div>
+          </div>
+          <Link to="/admin/approvals" className={cn('ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition-colors md:ml-0',
+            pending ? 'bg-brand-700 text-white hover:bg-brand-800' : 'border border-ink-200 bg-white text-ink-900 hover:bg-ink-50')}>
+            {pending ? 'Open inbox' : 'Inbox'} <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+        <div className="min-w-0 flex-1">
+          {!info.configured ? (
+            <div className="flex items-start gap-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>The AI team is off. Add <code className="rounded bg-white px-1 text-[13px]">ANTHROPIC_API_KEY</code> to <code className="rounded bg-white px-1 text-[13px]">server/.env</code> and restart. <Link to="/admin/ai-team" className="font-semibold underline">Set up</Link></p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {info.agents.map((a) => (
+                <li key={a.key} className="flex min-w-0 items-center gap-3">
+                  <AgentAvatar agentKey={a.key} name={a.name} size="sm" />
+                  <span className="min-w-0 flex-1 truncate text-sm" title={a.lastRun?.summary ?? undefined}>
+                    <span className="font-semibold text-ink-900">{a.name}</span>
+                    <span className="text-ink-400"> · </span>
+                    <span className="text-ink-600">{!a.enabled ? 'Paused' : a.lastRun ? (a.lastRun.summary || 'No summary') : 'No runs yet'}</span>
+                  </span>
+                  {a.lastRun && <span className="hidden shrink-0 sm:inline-flex"><RunStatusBadge status={a.lastRun.status} /></span>}
+                  <span className="shrink-0 text-xs text-ink-400">{a.lastRun ? timeAgo(a.lastRun.finishedAt ?? a.lastRun.startedAt) : ''}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link to="/admin/ai-team" className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-700 hover:text-brand-800">Manage AI team <ArrowRight className="h-4 w-4" /></Link>
+        </div>
+      </div>
+    </Card>
   )
 }
 

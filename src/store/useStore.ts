@@ -12,6 +12,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type {
   Application, ApplicationStatus, FeeSettings, Listing, ListingStatus, ListingSummary, Message, Notification, Rating,
   RenterProfile, Review, Role, TimelineEvent, User, VerificationStatus, IdType,
+  Agent, AgentPolicyAction, AgentPolicyPatch, AgentRun, AgentsOverview, Proposal,
 } from '@/types'
 import { DEFAULT_FEES } from '@/lib/fees'
 import { ApiError, errorMessage, get as httpGet, isApiError, onUnauthorized, patch, post, put, del, type CardInput } from '@/lib/api'
@@ -112,7 +113,12 @@ export interface AdminOverview {
   }
   pipeline: Partial<Record<ApplicationStatus, number>>
   recentEvents: Array<{ application: { id: string; renterName?: string; listingTitle?: string }; status: ApplicationStatus; by: TimelineEvent['by']; note?: string | null; at: string }>
+  /** Proposals from the AI team waiting for a decision. */
+  pendingApprovals?: number
 }
+
+export interface ProposalQuery { status?: 'pending' | 'all'; agent?: string; limit?: number }
+export interface BulkProposalResult { id: string; ok: boolean; proposal?: Proposal; error?: string }
 
 export type AdminUserRow = User & { applicationsCount?: number; listingsCount?: number; rating?: Rating | number | null; failedLogins?: number; lockedUntil?: string | null }
 type AdminListingRow = Listing & { owner?: User | { id?: string; name: string; email?: string; phone?: string } }
@@ -154,6 +160,12 @@ interface State {
   adminOverview: AdminOverview | null
   adminUsers: AdminUserRow[] | null
   adminListingIds: string[] | null
+  agentsOverview: AgentsOverview | null
+  agentPolicy: AgentPolicyAction[] | null
+  agentRuns: AgentRun[] | null
+  /** Last GET /admin/proposals result and the query that produced it. */
+  proposals: Proposal[] | null
+  proposalsQuery: string | null
 
   // auth
   loadMe: () => Promise<void>
@@ -200,12 +212,26 @@ interface State {
   markAllNotificationsRead: () => Promise<void>
 
   // admin
-  fetchAdminOverview: () => Promise<void>
+  /** `quiet` skips the error toast (background polls). */
+  fetchAdminOverview: (opts?: { quiet?: boolean }) => Promise<void>
   fetchAdminUsers: (q?: { q?: string; role?: string }) => Promise<void>
   fetchAdminListings: (q?: { status?: string; q?: string; owner?: string }) => Promise<void>
   fetchAdminSettings: () => Promise<void>
   updateFees: (fees: FeeSettings) => Promise<FeeSettings>
   resetDemo: () => Promise<void>
+
+  // AI team
+  fetchAgents: (opts?: { quiet?: boolean }) => Promise<AgentsOverview | null>
+  runAgent: (key: string) => Promise<AgentRun>
+  runAllAgents: () => Promise<AgentRun[]>
+  setAgentEnabled: (key: string, enabled: boolean) => Promise<Agent>
+  fetchAgentPolicy: () => Promise<AgentPolicyAction[]>
+  saveAgentPolicy: (patch: AgentPolicyPatch) => Promise<AgentPolicyAction[]>
+  fetchAgentRuns: (q?: { agent?: string; limit?: number }) => Promise<AgentRun[]>
+  fetchProposals: (q?: ProposalQuery) => Promise<Proposal[]>
+  approveProposal: (id: string, note?: string) => Promise<Proposal>
+  rejectProposal: (id: string, note?: string) => Promise<Proposal>
+  bulkProposals: (ids: string[], decision: 'approve' | 'reject') => Promise<BulkProposalResult[]>
 
   // ui
   toast: (t: Omit<Toast, 'id'>) => void
@@ -234,6 +260,11 @@ const sessionData = () => ({
   adminOverview: null,
   adminUsers: null,
   adminListingIds: null,
+  agentsOverview: null as AgentsOverview | null,
+  agentPolicy: null as AgentPolicyAction[] | null,
+  agentRuns: null as AgentRun[] | null,
+  proposals: null as Proposal[] | null,
+  proposalsQuery: null as string | null,
 })
 
 /* ---------- helpers ---------- */
@@ -292,6 +323,38 @@ export const useStore = create<State>()((set, get) => {
 
   const putApplication = (app: Application) => set((s) => ({ applicationsById: { ...s.applicationsById, [app.id]: { ...s.applicationsById[app.id], ...app } } }))
   const putListing = (l: Listing) => set((s) => ({ listingsById: { ...s.listingsById, [l.id]: { ...s.listingsById[l.id], ...l } } }))
+
+  const setPendingApprovals = (n: number) => set((s) => (s.adminOverview ? { adminOverview: { ...s.adminOverview, pendingApprovals: n } } : {}))
+
+  /** Merge decided/updated proposals into the cached list and keep the pending badge in step. */
+  const putProposals = (updated: Proposal[]) => {
+    if (!updated.length) return
+    const byKey = new Map(updated.map((p) => [p.id, p]))
+    set((s) => {
+      const before = s.proposals ?? []
+      const wasPending = before.filter((p) => byKey.has(p.id) && p.status === 'pending').length
+      const nowPending = updated.filter((p) => p.status === 'pending').length
+      const delta = nowPending - wasPending
+      return {
+        proposals: s.proposals?.map((p) => byKey.get(p.id) ?? p) ?? null,
+        ...(s.adminOverview && delta ? { adminOverview: { ...s.adminOverview, pendingApprovals: Math.max(0, (s.adminOverview.pendingApprovals ?? 0) + delta) } } : {}),
+      }
+    })
+  }
+
+  const putAgentRun = (key: string, run: AgentRun) => set((s) => (s.agentsOverview ? {
+    agentsOverview: { ...s.agentsOverview, agents: s.agentsOverview.agents.map((a) => (a.key === key ? { ...a, lastRun: run } : a)) },
+  } : {}))
+
+  /** Refresh the counters a decision or run can change. */
+  const afterDecision = () => {
+    void get().fetchAdminOverview({ quiet: true }).catch(() => {})
+    if (get().agentsOverview) void get().fetchAgents({ quiet: true }).catch(() => {})
+  }
+  const afterAgentActivity = () => {
+    void get().fetchAgents({ quiet: true }).catch(() => {})
+    void get().fetchAdminOverview({ quiet: true }).catch(() => {})
+  }
 
   const setMe = (user: User | null) => set((s) => ({
     me: user, currentUserId: user?.id ?? null,
@@ -637,11 +700,14 @@ export const useStore = create<State>()((set, get) => {
 
     /* ---------- admin ---------- */
 
-    fetchAdminOverview: () => once('adminOverview', async () => {
+    fetchAdminOverview: (opts) => once('adminOverview', async () => {
       try {
         const r = await httpGet<AdminOverview>('/admin/overview')
         set({ adminOverview: r })
-      } catch (e) { fail(e, 'Could not load the overview') }
+      } catch (e) {
+        if (opts?.quiet) return
+        fail(e, 'Could not load the overview')
+      }
     }),
 
     fetchAdminUsers: (q) => once(`adminUsers:${JSON.stringify(q ?? {})}`, async () => {
@@ -689,6 +755,110 @@ export const useStore = create<State>()((set, get) => {
       await post('/admin/reset-demo')
       set({ ...sessionData(), me: null, currentUserId: null })
       void get().loadMe()
+    }),
+
+    /* ---------- AI team ---------- */
+
+    fetchAgents: (opts) => once('agents', async () => {
+      try {
+        const r = await httpGet<AgentsOverview>('/admin/agents')
+        set({ agentsOverview: r })
+        return r
+      } catch (e) {
+        if (opts?.quiet) return null
+        return fail(e, 'Could not load the AI team')
+      }
+    }),
+
+    runAgent: async (key) => {
+      try {
+        const { run } = await post<{ run: AgentRun }>(`/admin/agents/${encodeURIComponent(key)}/run`)
+        putAgentRun(key, run)
+        afterAgentActivity()
+        return run
+      } catch (e) {
+        // 409 = a run is already in progress; the caller shows its own message.
+        if (isApiError(e, 409)) throw e
+        return fail(e, 'Could not run this employee')
+      }
+    },
+
+    runAllAgents: () => mutate('Could not run the AI team', async () => {
+      const { runs } = await post<{ runs: AgentRun[] }>('/admin/agents/run-all')
+      for (const run of runs ?? []) if (run.agentKey) putAgentRun(run.agentKey, run)
+      afterAgentActivity()
+      return runs ?? []
+    }),
+
+    setAgentEnabled: (key, enabled) => {
+      const prev = get().agentsOverview
+      // Optimistic: flip the toggle immediately, roll back on failure.
+      set((s) => (s.agentsOverview ? { agentsOverview: { ...s.agentsOverview, agents: s.agentsOverview.agents.map((a) => (a.key === key ? { ...a, enabled } : a)) } } : {}))
+      return mutate('Could not update this employee', async () => {
+        try {
+          const { agent } = await patch<{ agent: Agent }>(`/admin/agents/${encodeURIComponent(key)}`, { enabled })
+          set((s) => (s.agentsOverview ? { agentsOverview: { ...s.agentsOverview, agents: s.agentsOverview.agents.map((a) => (a.key === key ? { ...a, ...agent } : a)) } } : {}))
+          return agent
+        } catch (e) {
+          set({ agentsOverview: prev })
+          throw e
+        }
+      })
+    },
+
+    fetchAgentPolicy: () => once('agentPolicy', async () => {
+      try {
+        const r = await httpGet<{ actions: AgentPolicyAction[] }>('/admin/agents/policy')
+        set({ agentPolicy: r.actions })
+        return r.actions
+      } catch (e) { return fail(e, 'Could not load the autonomy policy') }
+    }),
+
+    saveAgentPolicy: (policy) => mutate('Could not save the policy', async () => {
+      const r = await put<{ actions: AgentPolicyAction[] }>('/admin/agents/policy', policy)
+      set({ agentPolicy: r.actions })
+      return r.actions
+    }),
+
+    fetchAgentRuns: (q) => once(`agentRuns:${JSON.stringify(q ?? {})}`, async () => {
+      try {
+        const r = await httpGet<{ items: AgentRun[] }>('/admin/agents/runs', q)
+        set({ agentRuns: r.items })
+        return r.items
+      } catch (e) { return fail(e, 'Could not load recent runs') }
+    }),
+
+    fetchProposals: (q) => {
+      const key = JSON.stringify(q ?? {})
+      return once(`proposals:${key}`, async () => {
+        try {
+          const r = await httpGet<{ items: Proposal[] }>('/admin/proposals', q ? { ...q } : undefined)
+          set({ proposals: r.items, proposalsQuery: key })
+          if (q?.status === 'pending' && !q.agent) setPendingApprovals(r.items.length)
+          return r.items
+        } catch (e) { return fail(e, 'Could not load approvals') }
+      })
+    },
+
+    approveProposal: (id, note) => mutate('Could not approve', async () => {
+      const { proposal } = await post<{ proposal: Proposal }>(`/admin/proposals/${encodeURIComponent(id)}/approve`, note ? { note } : {})
+      putProposals([proposal])
+      afterDecision()
+      return proposal
+    }),
+
+    rejectProposal: (id, note) => mutate('Could not reject', async () => {
+      const { proposal } = await post<{ proposal: Proposal }>(`/admin/proposals/${encodeURIComponent(id)}/reject`, note ? { note } : {})
+      putProposals([proposal])
+      afterDecision()
+      return proposal
+    }),
+
+    bulkProposals: (ids, decision) => mutate(decision === 'approve' ? 'Could not approve the selection' : 'Could not reject the selection', async () => {
+      const { results } = await post<{ results: BulkProposalResult[] }>('/admin/proposals/bulk', { ids, decision })
+      putProposals((results ?? []).map((r) => r.proposal).filter((p): p is Proposal => !!p))
+      afterDecision()
+      return results ?? []
     }),
 
     /* ---------- ui ---------- */

@@ -204,3 +204,96 @@ export interface UploadedFile {
 }
 
 export interface Rating { avg: number; count: number }
+
+/* ---------- AI team (GET /admin/agents, /admin/proposals) ---------- */
+
+/** How much an AI employee may do on its own for one action. */
+export type Autonomy = 'auto' | 'approve' | 'never'
+
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped'
+
+export interface AgentRun {
+  id: string
+  /** Present on GET /admin/agents/runs rows. */
+  agentKey?: string
+  agentName?: string
+  /** What started the run (e.g. 'schedule' | 'manual'); optional, not in the base contract. */
+  trigger?: string | null
+  status: AgentRunStatus
+  summary: string | null
+  startedAt: string
+  finishedAt: string | null
+  itemsReviewed: number
+  proposalsCreated: number
+  autoExecuted: number
+  costCents: number
+}
+
+export interface Agent {
+  key: string
+  name: string
+  title: string
+  description: string
+  schedule: 'cycle' | 'daily'
+  enabled: boolean
+  lastRun: AgentRun | null
+  pendingProposals: number
+}
+
+export interface AgentsOverview {
+  configured: boolean
+  model: string
+  intervalMinutes: number
+  budgetCents: number
+  spentThisMonthCents: number
+  agents: Agent[]
+}
+
+export interface AgentPolicyAction {
+  key: string
+  label: string
+  targetType: 'listing' | 'application' | 'user' | 'settings' | 'none' | string
+  description: string
+  defaultAutonomy: Autonomy
+  autonomy: Autonomy
+  autoMinConfidence: number
+  /** Optional: the built-in threshold, used by "Reset to defaults" when present. */
+  defaultAutoMinConfidence?: number
+}
+
+export type AgentPolicyPatch = Record<string, { autonomy?: Autonomy; autoMinConfidence?: number }>
+
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'executed' | 'failed' | 'expired'
+export type ProposalRisk = 'low' | 'medium' | 'high'
+
+export interface ProposalPayload {
+  message?: string
+  suggestedPrice?: number
+  currentPrice?: number
+  rejectionReason?: string
+  text?: string
+  adviceOnly?: boolean
+  [key: string]: unknown
+}
+
+export interface Proposal {
+  id: string
+  agentKey: string
+  agentName: string
+  action: string
+  actionLabel: string
+  targetType: string
+  targetId: string | null
+  target: { title: string; link: string | null } | null
+  payload: ProposalPayload | null
+  rationale: string
+  confidence: number
+  risk: ProposalRisk
+  status: ProposalStatus
+  decidedBy: string | { id?: string; name?: string } | null
+  decidedAt: string | null
+  decisionNote: string | null
+  executedAt: string | null
+  result: unknown
+  createdAt: string
+}

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, FileText, Heart, UserCircle, Building2, Users, ShieldCheck, ListChecks, Settings, Inbox, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, FileText, Heart, UserCircle, Building2, Users, ShieldCheck, ListChecks, Settings, Inbox, MessageSquare, Bot, CheckSquare } from 'lucide-react'
 import { DashboardLayout, PublicLayout, RequireRole } from '@/components/layout/Layouts'
 import { Toaster } from '@/components/ui'
 import { useAuthResolved, useMyApplications, useStore } from '@/store/useStore'
@@ -38,6 +38,8 @@ const AdminApplicationDetailPage = lazy(() => import('@/pages/admin/AdminApplica
 const AdminListingsPage = lazy(() => import('@/pages/admin/AdminListingsPage'))
 const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage'))
 const AdminSettingsPage = lazy(() => import('@/pages/admin/AdminSettingsPage'))
+const AdminApprovalsPage = lazy(() => import('@/pages/admin/AdminApprovalsPage'))
+const AiTeamPage = lazy(() => import('@/pages/admin/AiTeamPage'))
 
 function PageFallback({ fullScreen = false }: { fullScreen?: boolean }) {
   return (
@@ -115,17 +117,28 @@ function AdminShell() {
   const isAdmin = useStore((s) => s.me?.role === 'admin')
   const fetchAdminOverview = useStore((s) => s.fetchAdminOverview)
   useEffect(() => { if (isAdmin) void fetchAdminOverview().catch(() => {}) }, [isAdmin, fetchAdminOverview])
+  // Keep the Approvals badge fresh: re-poll the overview every 60s while the tab is visible.
+  useEffect(() => {
+    if (!isAdmin) return
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchAdminOverview({ quiet: true }).catch(() => {})
+    }, 60_000)
+    return () => clearInterval(t)
+  }, [isAdmin, fetchAdminOverview])
+  const pendingApprovals = useStore((s) => s.adminOverview?.pendingApprovals ?? 0)
   const toVerify = useStore((s) => s.adminOverview?.counts.toVerify ?? 0)
   const toModerate = useStore((s) => s.adminOverview?.counts.listingsPending ?? 0)
   return (
     <RequireRole roles={['admin']}>
       <DashboardLayout title="Admin" items={[
         { to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true },
+        { to: '/admin/approvals', label: 'Approvals', icon: CheckSquare, badge: pendingApprovals },
         { to: '/admin/verification', label: 'Verification queue', icon: ShieldCheck, badge: toVerify },
         { to: '/admin/applications', label: 'Deal pipeline', icon: ListChecks },
         { to: '/admin/listings', label: 'Listings', icon: Inbox, badge: toModerate },
         { to: '/admin/users', label: 'Users', icon: Users },
         { to: '/admin/messages', label: 'Messages', icon: MessageSquare },
+        { to: '/admin/ai-team', label: 'AI team', icon: Bot },
         { to: '/admin/settings', label: 'Fees & settings', icon: Settings },
       ]} />
     </RequireRole>
@@ -185,6 +198,8 @@ export default function App() {
           <Route path="users" element={<AdminUsersPage />} />
           <Route path="messages" element={<MessagesPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
+          <Route path="approvals" element={<AdminApprovalsPage />} />
+          <Route path="ai-team" element={<AiTeamPage />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Route>
       </Routes>
