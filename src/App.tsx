@@ -1,9 +1,9 @@
-import { Suspense, lazy, useEffect } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Suspense, lazy, useEffect, useRef } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, FileText, Heart, UserCircle, Building2, Users, ShieldCheck, ListChecks, Settings, Inbox, MessageSquare } from 'lucide-react'
 import { DashboardLayout, PublicLayout, RequireRole } from '@/components/layout/Layouts'
 import { Toaster } from '@/components/ui'
-import { useHydrated, useStore } from '@/store/useStore'
+import { useAuthResolved, useMyApplications, useStore } from '@/store/useStore'
 
 // Public
 const HomePage = lazy(() => import('@/pages/public/HomePage'))
@@ -53,8 +53,35 @@ function ScrollToTop() {
   return null
 }
 
+/** Sends the user to /login when their session ends (a request came back 401). */
+function SessionWatcher() {
+  const expiredAt = useStore((s) => s.sessionExpiredAt)
+  const nav = useNavigate()
+  const loc = useLocation()
+  const seen = useRef(expiredAt)
+  useEffect(() => {
+    if (expiredAt && expiredAt !== seen.current) {
+      seen.current = expiredAt
+      if (loc.pathname !== '/login') nav('/login', { replace: true, state: { from: loc.pathname + loc.search } })
+    }
+  }, [expiredAt, loc.pathname, loc.search, nav])
+  return null
+}
+
+/** Loads the signed-in user's applications once for the dashboard badges. */
+function useShellApplications(enabled: boolean) {
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const loaded = useStore((s) => s.myApplicationIds !== null)
+  useEffect(() => {
+    if (enabled && !loaded) void fetchMyApplications().catch(() => {})
+  }, [enabled, loaded, fetchMyApplications])
+  return useMyApplications()
+}
+
 function RenterShell() {
-  const pendingFees = useStore((s) => s.applications.filter((a) => a.renterId === s.currentUserId && a.status === 'awaiting_fees' && !a.renterFeePaid).length)
+  const role = useStore((s) => s.me?.role)
+  const apps = useShellApplications(role === 'renter')
+  const pendingFees = apps.filter((a) => a.status === 'awaiting_fees' && !a.renterFeePaid).length
   return (
     <RequireRole roles={['renter']}>
       <DashboardLayout title="Renter" items={[
@@ -69,7 +96,9 @@ function RenterShell() {
 }
 
 function OwnerShell() {
-  const waiting = useStore((s) => s.applications.filter((a) => a.ownerId === s.currentUserId && a.status === 'sent_to_owner').length)
+  const role = useStore((s) => s.me?.role)
+  const apps = useShellApplications(role === 'owner')
+  const waiting = apps.filter((a) => a.status === 'sent_to_owner').length
   return (
     <RequireRole roles={['owner']}>
       <DashboardLayout title="Owner" items={[
@@ -83,8 +112,11 @@ function OwnerShell() {
 }
 
 function AdminShell() {
-  const toVerify = useStore((s) => s.applications.filter((a) => a.status === 'submitted' || a.status === 'under_review').length)
-  const toModerate = useStore((s) => s.listings.filter((l) => l.status === 'pending_review').length)
+  const isAdmin = useStore((s) => s.me?.role === 'admin')
+  const fetchAdminOverview = useStore((s) => s.fetchAdminOverview)
+  useEffect(() => { if (isAdmin) void fetchAdminOverview().catch(() => {}) }, [isAdmin, fetchAdminOverview])
+  const toVerify = useStore((s) => s.adminOverview?.counts.toVerify ?? 0)
+  const toModerate = useStore((s) => s.adminOverview?.counts.listingsPending ?? 0)
   return (
     <RequireRole roles={['admin']}>
       <DashboardLayout title="Admin" items={[
@@ -101,11 +133,14 @@ function AdminShell() {
 }
 
 export default function App() {
-  const hydrated = useHydrated()
-  if (!hydrated) return <PageFallback fullScreen />
+  const authResolved = useAuthResolved()
+  const loadMe = useStore((s) => s.loadMe)
+  useEffect(() => { void loadMe() }, [loadMe])
+  if (!authResolved) return <><PageFallback fullScreen /><Toaster /></>
   return (
     <>
       <ScrollToTop />
+      <SessionWatcher />
       <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route element={<PublicLayout />}>

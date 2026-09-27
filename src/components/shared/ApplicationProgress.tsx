@@ -1,14 +1,18 @@
 import { Check, X } from 'lucide-react'
-import type { Application } from '@/types'
+import type { Application, TimelineEvent } from '@/types'
 import { APPLICATION_STATUS, PIPELINE, pipelineIndex } from '@/lib/status'
 import { cn } from '@/lib/utils'
 import { isFailed } from './applicationUtils'
 
-/** Horizontal progress tracker built from PIPELINE. Failed outcomes are shown as a red terminal node. */
-export function ApplicationProgress({ application, className }: { application: Application; className?: string }) {
+/**
+ * Horizontal progress tracker built from PIPELINE. Failed outcomes are shown as a red terminal node.
+ * `events` (from the application detail) tell how far a failed application got; without them the
+ * failed node is placed after the first step.
+ */
+export function ApplicationProgress({ application, events, className }: { application: Application; events?: TimelineEvent[]; className?: string }) {
   const failed = isFailed(application.status)
-  // Furthest happy-path step ever reached (timeline covers terminal statuses too).
-  const reached = Math.max(-1, ...application.timeline.map((e) => pipelineIndex(e.status)), pipelineIndex(application.status))
+  // Furthest happy-path step ever reached (events cover terminal statuses too).
+  const reached = Math.max(failed ? 0 : -1, ...(events ?? []).map((e) => pipelineIndex(e.status)), pipelineIndex(application.status))
   const current = failed ? reached + 1 : pipelineIndex(application.status)
 
   const steps = PIPELINE.map((s, i) => ({

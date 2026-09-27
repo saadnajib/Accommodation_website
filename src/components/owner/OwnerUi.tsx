@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, type LinkProps } from 'react-router-dom'
 import { CreditCard, ImageOff, Lock, ShieldCheck, Star } from 'lucide-react'
 import { Button, Input, Modal } from '@/components/ui'
 import { cn, formatMoney } from '@/lib/utils'
+import type { CardInput } from '@/lib/api'
 
 type Variant = 'primary' | 'secondary' | 'accent' | 'outline' | 'ghost'
 const variants: Record<Variant, string> = {
@@ -90,7 +91,7 @@ function formatExpiry(v: string) {
   return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d
 }
 
-/** Demo checkout: fake card fields, simulated processing, then onPaid(). No real payment is taken. */
+/** Demo checkout: card fields are posted to the API's mock payment endpoint via onPaid(card). No real payment is taken. */
 export function MockPaymentModal({ open, onClose, title, description, amount, currency = 'USD', lineItem, onPaid }: {
   open: boolean
   onClose: () => void
@@ -99,27 +100,28 @@ export function MockPaymentModal({ open, onClose, title, description, amount, cu
   amount: number
   currency?: string
   lineItem: string
-  onPaid: () => void
+  /** Should reject on failure (the store toasts the error) so the dialog stays open. */
+  onPaid: (card: CardInput) => Promise<unknown>
 }) {
   const [name, setName] = useState('')
   const [card, setCard] = useState('4242 4242 4242 4242')
   const [exp, setExp] = useState('12/29')
   const [cvc, setCvc] = useState('123')
   const [busy, setBusy] = useState(false)
-  const timer = useRef<number | undefined>(undefined)
-
-  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   const valid = name.trim().length >= 2 && card.replace(/\s/g, '').length === 16 && /^\d{2}\/\d{2}$/.test(exp) && /^\d{3,4}$/.test(cvc)
 
-  const pay = () => {
+  const pay = async () => {
     if (!valid || busy) return
     setBusy(true)
-    timer.current = window.setTimeout(() => {
-      setBusy(false)
-      onPaid()
+    try {
+      await onPaid({ number: card.replace(/\s/g, ''), exp, cvc })
       onClose()
-    }, 900)
+    } catch {
+      /* toast already shown; keep the dialog open for a retry */
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -130,7 +132,7 @@ export function MockPaymentModal({ open, onClose, title, description, amount, cu
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={pay} disabled={!valid} loading={busy}>
+          <Button onClick={() => void pay()} disabled={!valid} loading={busy}>
             <Lock className="h-4 w-4" /> Pay {formatMoney(amount, currency)}
           </Button>
         </>
@@ -141,7 +143,7 @@ export function MockPaymentModal({ open, onClose, title, description, amount, cu
         <span className="font-medium text-ink-700">{lineItem}</span>
         <span className="font-bold text-ink-900">{formatMoney(amount, currency)}</span>
       </div>
-      <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); pay() }}>
+      <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); void pay() }}>
         <Input label="Name on card" name="cc-name" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} placeholder="Marco Benedetti" />
         <Input
           label="Card number"
@@ -160,7 +162,7 @@ export function MockPaymentModal({ open, onClose, title, description, amount, cu
       </form>
       <p className="mt-4 flex items-start gap-2 text-xs text-ink-400">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
-        Demo checkout — no real card is charged. Payments on StayBridge are processed securely and held until the deal is confirmed.
+        Demo checkout — no real card is charged. The card details are only used by the demo payment endpoint.
       </p>
     </Modal>
   )

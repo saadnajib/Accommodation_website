@@ -4,61 +4,64 @@ import {
   ArrowRight, Banknote, Clock, Hourglass, Inbox, ListChecks, Send, ShieldCheck, Store, Users, Wallet, HandCoins, CircleCheck,
 } from 'lucide-react'
 import { ApplicationStatusBadge, Card, CardBody, CardHeader, EmptyState, PageHeader, Stat } from '@/components/ui'
-import { useStore } from '@/store/useStore'
-import { APPLICATION_STATUS, PIPELINE, pipelineIndex } from '@/lib/status'
+import { useAdminListings, useLoad, useMyApplications, useStore } from '@/store/useStore'
+import { APPLICATION_STATUS, PIPELINE } from '@/lib/status'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
-import { collectedRevenue, daysSince, isClosed, pendingRevenue, statusEnteredAt, BY_LABEL } from '@/components/admin/helpers'
-import type { Application } from '@/types'
+import { daysSince, statusEnteredAt, BY_LABEL } from '@/components/admin/helpers'
 
 interface QueueItem { key: string; to: string; icon: typeof ShieldCheck; tone: string; title: string; sub: string; age: string; sortAt: string }
 
 export default function AdminOverviewPage() {
-  const applications = useStore((s) => s.applications)
-  const listings = useStore((s) => s.listings)
-  const users = useStore((s) => s.users)
+  const overview = useStore((s) => s.adminOverview)
+  const applications = useMyApplications()
+  const pendingListings = useAdminListings()
+  const usersById = useStore((s) => s.usersById)
+  const summaries = useStore((s) => s.listingSummaries)
   const fees = useStore((s) => s.fees)
+  const fetchAdminOverview = useStore((s) => s.fetchAdminOverview)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const fetchAdminListings = useStore((s) => s.fetchAdminListings)
+  const { loading } = useLoad(
+    () => Promise.all([fetchAdminOverview(), fetchMyApplications(), fetchAdminListings({ status: 'pending_review' })]),
+    [fetchAdminOverview, fetchMyApplications, fetchAdminListings],
+  )
 
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
-  const listingById = useMemo(() => new Map(listings.map((l) => [l.id, l])), [listings])
+  // KPIs come straight from GET /admin/overview.
+  const c = overview?.counts
+  const roles = { renter: c?.usersByRole.renter ?? 0, owner: c?.usersByRole.owner ?? 0, admin: c?.usersByRole.admin ?? 0 }
+  const m = {
+    collected: overview?.revenueCollected ?? 0,
+    pending: overview?.revenuePending ?? 0,
+    purchases: overview?.purchasesCollected ?? 0,
+    toVerify: c?.toVerify ?? 0,
+    readyToSend: c?.readyToSend ?? overview?.pipeline.verified ?? 0,
+    waitingOwner: c?.waitingOnOwner ?? 0,
+    awaitingFees: c?.awaitingFees ?? 0,
+    completed: c?.completed ?? overview?.pipeline.completed ?? 0,
+    pendingListings: c?.listingsPending ?? 0,
+    liveListings: c?.listingsLive ?? 0,
+    featured: c?.listingsFeatured ?? 0,
+    users: roles.renter + roles.owner + roles.admin,
+    roles,
+  }
 
-  const m = useMemo(() => {
-    const count = (fn: (a: Application) => boolean) => applications.filter(fn).length
-    const roles = { renter: 0, owner: 0, admin: 0 }
-    users.forEach((u) => { roles[u.role]++ })
-    return {
-      collected: collectedRevenue(applications),
-      pending: pendingRevenue(applications),
-      toVerify: count((a) => a.status === 'submitted' || a.status === 'under_review'),
-      readyToSend: count((a) => a.status === 'verified'),
-      waitingOwner: count((a) => a.status === 'sent_to_owner'),
-      awaitingFees: count((a) => a.status === 'awaiting_fees'),
-      completed: count((a) => a.status === 'completed'),
-      pendingListings: listings.filter((l) => l.status === 'pending_review').length,
-      liveListings: listings.filter((l) => l.status === 'active').length,
-      featured: listings.filter((l) => l.status === 'active' && l.featured).length,
-      roles,
-    }
-  }, [applications, listings, users])
-
-  // Funnel: how many applications reached each stage, and how many sit there now.
+  // Funnel from the per-status pipeline counts: "reached" = currently at this stage or any later happy-path stage.
   const funnel = useMemo(() => {
-    return PIPELINE.map((stage, i) => {
-      const reached = applications.filter((a) => {
-        if (pipelineIndex(a.status) >= i) return true
-        return a.timeline.some((e) => pipelineIndex(e.status) >= i)
-      }).length
-      const now = applications.filter((a) => a.status === stage).length
-      return { stage, reached, now }
-    })
-  }, [applications])
+    const p = overview?.pipeline ?? {}
+    return PIPELINE.map((stage, i) => ({
+      stage,
+      now: p[stage] ?? 0,
+      reached: PIPELINE.slice(i).reduce((sum, s) => sum + (p[s] ?? 0), 0),
+    }))
+  }, [overview])
   const funnelMax = Math.max(1, ...funnel.map((f) => f.reached))
-  const closedCount = applications.filter((a) => isClosed(a.status)).length
+  const closedCount = (overview?.pipeline.rejected ?? 0) + (overview?.pipeline.owner_declined ?? 0) + (overview?.pipeline.cancelled ?? 0)
 
   const queue = useMemo(() => {
     const items: QueueItem[] = []
     for (const a of applications) {
-      const renter = userById.get(a.renterId)
-      const listing = listingById.get(a.listingId)
+      const renter = usersById[a.renterId]
+      const listing = summaries[a.listingId]
       const since = statusEnteredAt(a)
       const who = renter?.name ?? 'Unknown renter'
       const what = listing?.title ?? 'Unknown listing'
@@ -77,18 +80,15 @@ export default function AdminOverviewPage() {
           title: `Chase ${missing} fee`, sub: `${who} · ${what}`, age: `due ${daysSince(since)}d`, sortAt: since })
       }
     }
-    for (const l of listings) {
+    for (const l of pendingListings) {
       if (l.status !== 'pending_review') continue
       items.push({ key: `l-${l.id}`, to: '/admin/listings', icon: Store, tone: 'bg-amber-50 text-amber-700',
-        title: `Moderate listing “${l.title}”`, sub: `${userById.get(l.ownerId)?.name ?? 'Owner'} · ${l.city}`, age: timeAgo(l.createdAt), sortAt: l.createdAt })
+        title: `Moderate listing “${l.title}”`, sub: `${usersById[l.ownerId]?.name ?? l.ownerName ?? 'Owner'} · ${l.city}`, age: timeAgo(l.createdAt), sortAt: l.createdAt })
     }
     return items.sort((a, b) => a.sortAt.localeCompare(b.sortAt))
-  }, [applications, listings, userById, listingById])
+  }, [applications, pendingListings, usersById, summaries])
 
-  const activity = useMemo(() => applications
-    .flatMap((a) => a.timeline.map((e, i) => ({ a, e, i, key: `${a.id}-${i}` })))
-    .sort((x, y) => y.e.at.localeCompare(x.e.at) || y.i - x.i)
-    .slice(0, 10), [applications])
+  const activity = (overview?.recentEvents ?? []).slice(0, 10)
 
   const cur = fees.currency
 
@@ -97,7 +97,7 @@ export default function AdminOverviewPage() {
       <PageHeader title="Operations overview" description="Everything that needs your attention across verification, deals and listings." />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Revenue collected" value={formatMoney(m.collected, cur)} sub={`${m.completed} deal${m.completed === 1 ? '' : 's'} completed`} icon={<Wallet className="h-5 w-5" />} tone="green" />
+        <Stat label="Revenue collected" value={formatMoney(m.collected, cur)} sub={`${m.completed} deal${m.completed === 1 ? '' : 's'} completed${m.purchases ? ` · +${formatMoney(m.purchases, cur)} add-ons` : ''}`} icon={<Wallet className="h-5 w-5" />} tone="green" />
         <Stat label="Pending revenue" value={formatMoney(m.pending, cur)} sub={`${m.awaitingFees} deal${m.awaitingFees === 1 ? '' : 's'} awaiting fees`} icon={<Banknote className="h-5 w-5" />} tone="accent" />
         <Link to="/admin/verification" className="block rounded-2xl transition-transform hover:-translate-y-0.5 [&>div]:h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
           <Stat label="To verify" value={m.toVerify} sub={`${m.readyToSend} verified, ready to send`} icon={<ShieldCheck className="h-5 w-5" />} tone="brand" />
@@ -110,7 +110,7 @@ export default function AdminOverviewPage() {
         <MiniStat label="Awaiting fees" value={m.awaitingFees} to="/admin/applications" />
         <MiniStat label="Listings to review" value={m.pendingListings} to="/admin/listings" highlight={m.pendingListings > 0} />
         <MiniStat label="Live listings" value={m.liveListings} sub={`${m.featured} featured`} to="/admin/listings" />
-        <MiniStat label="Users" value={users.length} sub={`${m.roles.renter} renters · ${m.roles.owner} owners · ${m.roles.admin} admin`} to="/admin/users" />
+        <MiniStat label="Users" value={m.users} sub={`${m.roles.renter} renters · ${m.roles.owner} owners · ${m.roles.admin} admin`} to="/admin/users" />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5">
@@ -137,7 +137,9 @@ export default function AdminOverviewPage() {
         <Card className="xl:col-span-2">
           <CardHeader title="Today’s queue" description={`${queue.length} item${queue.length === 1 ? '' : 's'} need action`} />
           <CardBody className="p-2 sm:p-2">
-            {queue.length === 0 ? (
+            {queue.length === 0 && loading ? (
+              <div className="space-y-2 p-2">{[0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-ink-100" />)}</div>
+            ) : queue.length === 0 ? (
               <EmptyState className="m-2 border-0" icon={<CircleCheck className="h-6 w-6" />} title="Inbox zero" description="Nothing needs your attention right now." />
             ) : (
               <ul className="max-h-[26rem] overflow-y-auto">
@@ -166,17 +168,16 @@ export default function AdminOverviewPage() {
           <CardBody><EmptyState icon={<Inbox className="h-6 w-6" />} title="No activity yet" /></CardBody>
         ) : (
           <ul className="divide-y divide-ink-100">
-            {activity.map(({ a, e, key }) => {
-              const renter = userById.get(a.renterId)
-              const listing = listingById.get(a.listingId)
+            {activity.map((e, i) => {
+              const a = e.application
               return (
-                <li key={key}>
+                <li key={`${a.id}-${e.at}-${i}`}>
                   <Link to={`/admin/applications/${a.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 transition-colors hover:bg-ink-50">
                     <ApplicationStatusBadge status={e.status} />
                     <span className="min-w-0 flex-1 text-sm">
-                      <span className="font-medium text-ink-900">{renter?.name ?? 'Unknown renter'}</span>
+                      <span className="font-medium text-ink-900">{a.renterName ?? 'Unknown renter'}</span>
                       <span className="text-ink-400"> · </span>
-                      <span className="text-ink-600">{listing?.title ?? 'Unknown listing'}</span>
+                      <span className="text-ink-600">{a.listingTitle ?? 'Unknown listing'}</span>
                       {e.note && <span className="mt-0.5 block truncate text-xs text-ink-400">“{e.note}”</span>}
                     </span>
                     <span className="text-xs text-ink-400">{BY_LABEL[e.by]} · {timeAgo(e.at)}</span>

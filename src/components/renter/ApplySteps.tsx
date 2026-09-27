@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, BadgeCheck, CalendarDays, Info, Lock, Pencil, PiggyBank, RefreshCw, ScrollText, ShieldCheck, Upload } from 'lucide-react'
-import type { Application, FeeSettings, Listing, User } from '@/types'
+import { AlertTriangle, BadgeCheck, CalendarDays, Info, Lock, Pencil, PiggyBank, ScrollText, ShieldCheck } from 'lucide-react'
+import type { FeeSettings, Listing, User } from '@/types'
 import { Badge, Checkbox, Input, Select, Textarea, Toggle } from '@/components/ui'
+import { coverImage } from '@/store/useStore'
 import { AGREEMENT_CLAUSES, computeFees } from '@/lib/fees'
 import { cn, formatDate, formatMoney } from '@/lib/utils'
 import { ID_TYPE_LABELS } from '@/components/shared/applicationUtils'
@@ -34,7 +35,7 @@ export function ListingSummary({ listing, className }: { listing: Listing; class
   return (
     <div className={cn('flex items-center gap-3 rounded-xl border border-ink-200 bg-white p-3', className)}>
       <div className="h-16 w-20 shrink-0 overflow-hidden rounded-lg bg-ink-100">
-        {listing.images[0] && <img src={listing.images[0]} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
+        {coverImage(listing) && <img src={coverImage(listing)} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
       </div>
       <div className="min-w-0">
         <p className="line-clamp-2 text-sm font-semibold text-ink-900">{listing.title}</p>
@@ -147,60 +148,34 @@ export function AgreementStep({ draft, set, err, touch, listing, fees, user }: S
 
 /* ---------------- c. Verify ---------------- */
 
-export function VerifyStep({ draft, set, err, touch, previous }: StepProps & { previous?: Application }) {
-  const v = previous?.verification
+export function VerifyStep({ draft, set, err, touch, verified }: StepProps & { verified?: boolean }) {
   return (
     <div>
       <StepTitle icon={<BadgeCheck className="h-5 w-5" />} title="Verify your identity" description="Owners only ever see verified renters. Your documents are reviewed by the StayBridge team and never shared." />
-      {v && (
-        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
-          <div className="flex items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700"><BadgeCheck className="h-5 w-5" /></span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-ink-900">You're already verified</p>
-              <p className="text-sm text-ink-500">We can reuse the documents from your last application ({formatDate(v.submittedAt)}).</p>
-              <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-                <div className="flex gap-2"><dt className="text-ink-400">Document</dt><dd className="font-medium text-ink-800">{ID_TYPE_LABELS[v.idType]}</dd></div>
-                <div className="flex gap-2"><dt className="text-ink-400">Number</dt><dd className="font-mono font-medium text-ink-800">{v.idNumberMasked}</dd></div>
-                <div className="flex min-w-0 gap-2"><dt className="text-ink-400">ID file</dt><dd className="truncate font-medium text-ink-800">{v.idDocumentName}</dd></div>
-                <div className="flex min-w-0 gap-2"><dt className="text-ink-400">Selfie</dt><dd className="truncate font-medium text-ink-800">{v.selfieName}</dd></div>
-                {v.proofOfIncomeName && <div className="flex min-w-0 gap-2 sm:col-span-2"><dt className="text-ink-400">Income</dt><dd className="truncate font-medium text-ink-800">{v.proofOfIncomeName}</dd></div>}
-              </dl>
-            </div>
-          </div>
-          <div role="radiogroup" aria-label="Verification method" className="mt-4 grid gap-2 sm:grid-cols-2">
-            {([['reuse', 'Reuse my verification', 'Fastest — no uploads needed', RefreshCw], ['new', 'Upload new documents', 'If your ID or income changed', Upload]] as const).map(([mode, label, desc, Icon]) => (
-              <button key={mode} type="button" role="radio" aria-checked={draft.verifyMode === mode} onClick={() => set({ verifyMode: mode })}
-                className={cn('flex items-start gap-3 rounded-xl border bg-white p-3 text-left transition-colors',
-                  draft.verifyMode === mode ? 'border-brand-600 ring-2 ring-brand-500/25' : 'border-ink-200 hover:border-ink-300')}>
-                <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', draft.verifyMode === mode ? 'text-brand-700' : 'text-ink-400')} />
-                <span><span className="block text-sm font-semibold text-ink-900">{label}</span><span className="block text-xs text-ink-500">{desc}</span></span>
-              </button>
-            ))}
-          </div>
-        </div>
+      {verified && (
+        <p className="mb-6 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">
+          <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0" /> You're already verified. We still need current documents for each application so the team can confirm nothing has changed.
+        </p>
       )}
-      {draft.verifyMode === 'new' && (
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Select label="Document type" name="idType" placeholder="Select…" value={draft.idType}
-            options={Object.entries(ID_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
-            onChange={(e) => { set({ idType: e.target.value as ApplyDraft['idType'] }); touch('idType') }} onBlur={() => touch('idType')} error={err('idType')} />
-          <Input label="Document number" name="idNumber" autoComplete="off" spellCheck={false} value={draft.idNumber}
-            onChange={(e) => { set({ idNumber: e.target.value.toUpperCase() }); touch('idNumber') }} onBlur={() => touch('idNumber')}
-            error={err('idNumber')} help="Stored masked — only the last 4 characters are kept." right={<Lock className="h-4 w-4" />} />
-          <FileField label="ID document" hint="Clear photo or scan of the photo page" value={draft.idDocument}
-            onChange={(f) => { set({ idDocument: f }); touch('idDocument') }} error={err('idDocument')} />
-          <FileField label="Selfie" hint="A clear photo of your face" accept="image/*" value={draft.selfie}
-            onChange={(f) => { set({ selfie: f }); touch('selfie') }} error={err('selfie')} />
-          <div className="sm:col-span-2">
-            <FileField label="Proof of income" optional hint="Payslip, contract or bank statement — boosts owner confidence" value={draft.income}
-              onChange={(f) => { set({ income: f }); touch('income') }} error={err('income')} />
-          </div>
-          <p className="flex items-start gap-2 rounded-lg bg-ink-100/70 px-3 py-2 text-xs text-ink-500 sm:col-span-2">
-            <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Demo mode: only file names are recorded, nothing is uploaded.
-          </p>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <Select label="Document type" name="idType" placeholder="Select…" value={draft.idType}
+          options={Object.entries(ID_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+          onChange={(e) => { set({ idType: e.target.value as ApplyDraft['idType'] }); touch('idType') }} onBlur={() => touch('idType')} error={err('idType')} />
+        <Input label="Document number" name="idNumber" autoComplete="off" spellCheck={false} value={draft.idNumber}
+          onChange={(e) => { set({ idNumber: e.target.value.toUpperCase() }); touch('idNumber') }} onBlur={() => touch('idNumber')}
+          error={err('idNumber')} help="Sent securely; StayBridge stores only the last 4 characters." right={<Lock className="h-4 w-4" />} />
+        <FileField label="ID document" kind="id_document" hint="Clear photo or scan of the photo page · JPG, PNG or PDF, up to 8 MB" value={draft.idDocument}
+          onChange={(f) => { set({ idDocument: f }); touch('idDocument') }} error={err('idDocument')} />
+        <FileField label="Selfie" kind="selfie" hint="A clear photo of your face · JPG or PNG, up to 8 MB" accept="image/jpeg,image/png,image/webp" value={draft.selfie}
+          onChange={(f) => { set({ selfie: f }); touch('selfie') }} error={err('selfie')} />
+        <div className="sm:col-span-2">
+          <FileField label="Proof of income" kind="proof_of_income" optional hint="Payslip, contract or bank statement — boosts owner confidence" value={draft.income}
+            onChange={(f) => { set({ income: f }); touch('income') }} error={err('income')} />
         </div>
-      )}
+        <p className="flex items-start gap-2 rounded-lg bg-ink-100/70 px-3 py-2 text-xs text-ink-500 sm:col-span-2">
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Documents are uploaded privately: only you and the StayBridge verification team can open them — never owners.
+        </p>
+      </div>
     </div>
   )
 }
@@ -294,9 +269,8 @@ function Row({ label, children, wide }: { label: string; children: ReactNode; wi
   )
 }
 
-export function ReviewStep({ draft, listing, onEdit, previous, fees, user }: { draft: ApplyDraft; listing: Listing; onEdit: (s: number) => void; previous?: Application; fees: FeeSettings; user: User }) {
+export function ReviewStep({ draft, listing, onEdit, fees, user }: { draft: ApplyDraft; listing: Listing; onEdit: (s: number) => void; fees: FeeSettings; user: User }) {
   const price = Number(draft.proposedPrice)
-  const v = draft.verifyMode === 'reuse' ? previous?.verification : undefined
   return (
     <div>
       <StepTitle icon={<CalendarDays className="h-5 w-5" />} title="Review & submit" description="Check everything before we send it to the StayBridge team for verification." />
@@ -313,19 +287,10 @@ export function ReviewStep({ draft, listing, onEdit, previous, fees, user }: { d
           <Row label="Service fee (if accepted)">{formatMoney(computeFees(price, fees, { hasTenantPass: user.hasTenantPass }).renterFee, listing.currency)}{user.hasTenantPass && <span className="text-xs font-normal text-emerald-700"> · Tenant Pass applied</span>}</Row>
         </ReviewSection>
         <ReviewSection title={STEPS[2]} step={2} onEdit={onEdit}>
-          {v ? (
-            <>
-              <Row label="Method">Reusing previous verification</Row>
-              <Row label="Document">{ID_TYPE_LABELS[v.idType]} · <span className="font-mono">{v.idNumberMasked}</span></Row>
-            </>
-          ) : (
-            <>
-              <Row label="Document">{draft.idType ? ID_TYPE_LABELS[draft.idType] : '—'} · <span className="font-mono">{draft.idNumber ? '•'.repeat(Math.max(0, draft.idNumber.length - 4)) + draft.idNumber.slice(-4) : '—'}</span></Row>
-              <Row label="ID file">{draft.idDocument?.name ?? '—'}</Row>
-              <Row label="Selfie">{draft.selfie?.name ?? '—'}</Row>
-              <Row label="Proof of income">{draft.income?.name ?? 'Not provided'}</Row>
-            </>
-          )}
+          <Row label="Document">{draft.idType ? ID_TYPE_LABELS[draft.idType] : '—'} · <span className="font-mono">{draft.idNumber ? '•'.repeat(Math.max(0, draft.idNumber.length - 4)) + draft.idNumber.slice(-4) : '—'}</span></Row>
+          <Row label="ID file">{draft.idDocument?.name ?? '—'}</Row>
+          <Row label="Selfie">{draft.selfie?.name ?? '—'}</Row>
+          <Row label="Proof of income">{draft.income?.name ?? 'Not provided'}</Row>
         </ReviewSection>
         <ReviewSection title={STEPS[3]} step={3} onEdit={onEdit}>
           <Row label="Occupation">{draft.occupation}{draft.employer && ` at ${draft.employer}`}</Row>

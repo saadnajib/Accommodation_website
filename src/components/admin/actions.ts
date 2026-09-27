@@ -17,8 +17,6 @@ export interface ActionSpec {
   /** Toast shown after the action. */
   toast: string
   toastTone?: 'success' | 'info'
-  /** Append a suffix to the timeline note (e.g. recorded on owner's behalf). */
-  noteSuffix?: string
 }
 
 export const CANCEL_ACTION: ActionSpec = {
@@ -54,13 +52,13 @@ export const SEND_TO_OWNER: ActionSpec = {
 export const OWNER_ACCEPTED: ActionSpec = {
   key: 'accept', label: 'Record owner accepted', to: 'owner_accepted', variant: 'primary',
   title: 'Record owner acceptance', body: 'Use this when the owner confirmed by phone or email. Fees become due for both sides immediately.',
-  confirmLabel: 'Record acceptance', noteLabel: 'Note (optional)', toast: 'Owner acceptance recorded', noteSuffix: '(recorded by admin on owner’s behalf)',
+  confirmLabel: 'Record acceptance', noteLabel: 'Note (optional)', toast: 'Owner acceptance recorded',
 }
 
 export const OWNER_DECLINED: ActionSpec = {
   key: 'decline', label: 'Record owner declined', to: 'owner_declined', variant: 'outline',
   title: 'Record owner decline', body: 'The renter is told the owner chose another tenant. No fees are charged.',
-  confirmLabel: 'Record decline', noteLabel: 'Owner’s reason', noteRequired: true, toast: 'Owner decline recorded', toastTone: 'info', noteSuffix: '(recorded by admin on owner’s behalf)',
+  confirmLabel: 'Record decline', noteLabel: 'Owner’s reason', noteRequired: true, toast: 'Owner decline recorded', toastTone: 'info',
 }
 
 export const MARK_COMPLETED: ActionSpec = {
@@ -72,7 +70,7 @@ export const MARK_COMPLETED: ActionSpec = {
 /** Context-aware primary actions for the detail page (cancel is separate). */
 export function actionsFor(status: ApplicationStatus): ActionSpec[] {
   switch (status) {
-    case 'submitted': return [START_REVIEW]
+    case 'submitted': return [START_REVIEW, APPROVE_VERIFICATION, REJECT_VERIFICATION]
     case 'under_review': return [APPROVE_VERIFICATION, REJECT_VERIFICATION]
     case 'verified': return [SEND_TO_OWNER]
     case 'sent_to_owner': return [OWNER_ACCEPTED, OWNER_DECLINED]
@@ -83,27 +81,29 @@ export function actionsFor(status: ApplicationStatus): ActionSpec[] {
 
 export const canCancel = (status: ApplicationStatus) => !isTerminal(status)
 
-/** Returns a function that applies an action to an application, with toast. */
+/**
+ * Returns a function that applies an action via POST /applications/:id/transition, then toasts.
+ * The server appends "(recorded by admin on owner's behalf)" to owner decisions itself.
+ * Rejects on failure (the store has already shown the error toast).
+ */
 export function useRunAction() {
   const advance = useStore((s) => s.advanceApplication)
   const toast = useStore((s) => s.toast)
-  return useCallback((app: Application, spec: ActionSpec, note?: string) => {
+  return useCallback(async (app: Application, spec: ActionSpec, note?: string) => {
     const trimmed = note?.trim() ?? ''
-    const full = [trimmed, spec.noteSuffix].filter(Boolean).join(' ') || undefined
-    advance(app.id, spec.to, 'admin', full)
+    await advance(app.id, spec.to, trimmed || undefined)
     toast({ title: spec.toast, body: trimmed || undefined, tone: spec.toastTone ?? 'success' })
   }, [advance, toast])
 }
 
-/** Mark a fee as received (offline payment) and toast; contact unlocks automatically when both are paid. */
+/** Mark a fee as received (offline payment, POST /mark-paid) and toast; contact unlocks server-side when both are paid. */
 export function useMarkFee() {
-  const payFee = useStore((s) => s.payFee)
+  const markFeePaid = useStore((s) => s.markFeePaid)
   const toast = useStore((s) => s.toast)
-  return useCallback((app: Application, side: 'renter' | 'owner') => {
-    payFee(app.id, side)
-    const other = side === 'renter' ? app.ownerFeePaid : app.renterFeePaid
-    toast(other
+  return useCallback(async (app: Application, side: 'renter' | 'owner') => {
+    const after = await markFeePaid(app.id, side)
+    toast(after.contactUnlocked || (after.renterFeePaid && after.ownerFeePaid)
       ? { title: 'Both fees received', body: 'Contact is now unlocked for renter and owner.', tone: 'success' }
       : { title: `${side === 'renter' ? 'Renter' : 'Owner'} fee marked as received`, body: `Waiting on the ${side === 'renter' ? 'owner' : 'renter'}.`, tone: 'success' })
-  }, [payFee, toast])
+  }, [markFeePaid, toast])
 }

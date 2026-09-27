@@ -1,4 +1,4 @@
-import type { Application, ApplicationStatus, Review, Role } from '@/types'
+import type { Application, ApplicationStatus, Role } from '@/types'
 
 /** Statuses after which an application can no longer move forward. */
 export const TERMINAL_STATUSES: ApplicationStatus[] = ['rejected', 'owner_declined', 'cancelled', 'completed']
@@ -20,11 +20,14 @@ export function actorLabel(by: Role | 'system', viewer?: Role) {
 
 export type AttentionKind = 'pay' | 'message' | 'review'
 
-/** What (if anything) the renter needs to do next on an application. */
-export function renterAttention(app: Application, reviews: Review[], meId: string): AttentionKind | null {
+/**
+ * What (if anything) the renter needs to do next on an application. `reviewed` is true/false once the
+ * application detail has been loaded (it carries `myReview`); unknown counts as "not yet reviewed".
+ */
+export function renterAttention(app: Application, reviewed?: boolean): AttentionKind | null {
   if (app.status === 'awaiting_fees' && !app.renterFeePaid) return 'pay'
   if (app.status === 'contact_unlocked') return 'message'
-  if (app.status === 'completed' && !reviews.some((r) => r.applicationId === app.id && r.fromId === meId)) return 'review'
+  if (app.status === 'completed' && !reviewed) return 'review'
   return null
 }
 

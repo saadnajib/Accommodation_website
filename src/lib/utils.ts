@@ -35,8 +35,3 @@ export function daysFromNow(days: number) {
 export function initials(name: string) {
   return name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 }
-
-export function maskId(id: string) {
-  if (id.length <= 4) return '****'
-  return '*'.repeat(id.length - 4) + id.slice(-4)
-}

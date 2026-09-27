@@ -14,7 +14,8 @@ export interface ActionModalProps {
   noNote?: boolean
   placeholder?: string
   children?: ReactNode
-  onConfirm: (note: string) => void
+  /** May return a promise: the dialog stays open while it runs and only closes on success. */
+  onConfirm: (note: string) => unknown
 }
 
 /** Confirmation dialog with an optional (or required) note / reason. */
@@ -23,14 +24,22 @@ export function ActionModal({
 }: ActionModalProps) {
   const [note, setNote] = useState('')
   const [touched, setTouched] = useState(false)
+  const [busy, setBusy] = useState(false)
   const missing = !!noteRequired && !note.trim()
 
-  const close = () => { setNote(''); setTouched(false); onClose() }
-  const confirm = () => {
+  const close = () => { if (busy) return; setNote(''); setTouched(false); onClose() }
+  const confirm = async () => {
     if (missing) { setTouched(true); return }
-    onConfirm(note.trim())
-    setNote(''); setTouched(false)
-    onClose()
+    setBusy(true)
+    try {
+      await onConfirm(note.trim())
+      setNote(''); setTouched(false)
+      onClose()
+    } catch {
+      /* error toast already shown; keep the dialog open */
+    } finally {
+      setBusy(false)
+    }
   }
 
   // Confirm variant "ghost" looks weak in a footer; promote it.
@@ -39,8 +48,8 @@ export function ActionModal({
   return (
     <Modal open={open} onClose={close} title={title} size="sm"
       footer={<>
-        <Button variant="outline" onClick={close}>Back</Button>
-        <Button variant={confirmVariant} onClick={confirm}>{confirmLabel}</Button>
+        <Button variant="outline" onClick={close} disabled={busy}>Back</Button>
+        <Button variant={confirmVariant} onClick={() => void confirm()} loading={busy}>{confirmLabel}</Button>
       </>}>
       {body && <p className="text-sm text-ink-500">{body}</p>}
       {children && <div className="mt-3">{children}</div>}

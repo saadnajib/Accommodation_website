@@ -1,4 +1,4 @@
-import type { Application, ApplicationStatus, RenterVerification } from '@/types'
+import type { Application, ApplicationStatus, RenterVerification, TimelineEvent } from '@/types'
 import type { Tone } from '@/lib/status'
 
 /** Statuses that end a deal without success. */
@@ -24,12 +24,17 @@ export const BY_LABEL: Record<string, string> = {
 
 export const DAY_MS = 86_400_000
 
-/** When the application entered its current status. */
-export function statusEnteredAt(app: Application) {
-  for (let i = app.timeline.length - 1; i >= 0; i--) {
-    if (app.timeline[i].status === app.status) return app.timeline[i].at
+/**
+ * When the application entered its current status. Uses the event log when loaded (detail pages);
+ * list rows only carry `updatedAt`, which is the best available approximation there.
+ */
+export function statusEnteredAt(app: Application, events?: TimelineEvent[]) {
+  if (events) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].status === app.status) return events[i].at
+    }
   }
-  return app.createdAt
+  return app.updatedAt ?? app.createdAt
 }
 
 export function daysSince(iso: string) {
@@ -43,16 +48,6 @@ export function affordability(monthlyIncome: number | undefined, rent: number) {
   const tone: Tone = ratio >= 3 ? 'success' : ratio >= 2 ? 'warning' : 'danger'
   const verdict = ratio >= 3 ? 'Comfortable' : ratio >= 2 ? 'Stretch' : 'At risk'
   return { ratio, label: `${ratio.toFixed(1)}× rent`, tone, verdict }
-}
-
-export function collectedRevenue(apps: Application[]) {
-  return apps.reduce((sum, a) => sum + (a.renterFeePaid ? a.renterFee : 0) + (a.ownerFeePaid ? a.ownerFee : 0), 0)
-}
-
-export function pendingRevenue(apps: Application[]) {
-  return apps
-    .filter((a) => a.status === 'awaiting_fees')
-    .reduce((sum, a) => sum + (a.renterFeePaid ? 0 : a.renterFee) + (a.ownerFeePaid ? 0 : a.ownerFee), 0)
 }
 
 /** What the admin should do next, per status (admin-voiced, unlike APPLICATION_STATUS.description). */

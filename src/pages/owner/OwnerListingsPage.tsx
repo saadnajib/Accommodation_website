@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, CalendarDays, Eye, Home, KeyRound, Pause, Pencil, Play, Plus, Sparkles, Star, Users } from 'lucide-react'
-import { useCurrentUser, useStore } from '@/store/useStore'
+import { coverImage, useLoad, useMyListings, useStore } from '@/store/useStore'
 import { Button, Card, EmptyState, ListingStatusBadge, Modal, PageHeader, Tabs } from '@/components/ui'
 import { ButtonLink, Thumb } from '@/components/owner/OwnerUi'
 import { FeatureListingModal } from '@/components/owner/FeatureListingModal'
@@ -23,25 +23,15 @@ function matches(l: Listing, f: Filter) {
 }
 
 export default function OwnerListingsPage() {
-  const me = useCurrentUser()
-  const allListings = useStore((s) => s.listings)
-  const allApps = useStore((s) => s.applications)
+  const listings = useMyListings()
+  const fetchMyListings = useStore((s) => s.fetchMyListings)
+  const { loading } = useLoad(() => fetchMyListings(), [fetchMyListings])
   const setListingStatus = useStore((s) => s.setListingStatus)
   const toast = useStore((s) => s.toast)
   const [filter, setFilter] = useState<Filter>('all')
   const [featuring, setFeaturing] = useState<Listing | null>(null)
   const [renting, setRenting] = useState<Listing | null>(null)
-
-  const meId = me?.id
-  const listings = useMemo(
-    () => allListings.filter((l) => l.ownerId === meId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [allListings, meId],
-  )
-  const applicantCount = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const a of allApps) if (a.ownerId === meId) m.set(a.listingId, (m.get(a.listingId) ?? 0) + 1)
-    return m
-  }, [allApps, meId])
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const visible = listings.filter((l) => matches(l, filter))
   const tabs: Array<{ value: Filter; label: string; count: number }> = [
@@ -53,20 +43,27 @@ export default function OwnerListingsPage() {
     { value: 'rejected', label: 'Rejected', count: listings.filter((l) => matches(l, 'rejected')).length },
   ]
 
-  const togglePause = (l: Listing) => {
-    if (l.status === 'active') {
-      setListingStatus(l.id, 'paused')
-      toast({ title: 'Listing paused', body: `“${l.title}” is hidden from search until you resume it.`, tone: 'info' })
-    } else if (l.status === 'paused') {
-      setListingStatus(l.id, 'active')
-      toast({ title: 'Listing is live again', body: `“${l.title}” is visible in search.`, tone: 'success' })
-    }
+  const togglePause = async (l: Listing) => {
+    if (busyId) return
+    setBusyId(l.id)
+    try {
+      if (l.status === 'active') {
+        await setListingStatus(l.id, 'paused')
+        toast({ title: 'Listing paused', body: `“${l.title}” is hidden from search until you resume it.`, tone: 'info' })
+      } else if (l.status === 'paused') {
+        await setListingStatus(l.id, 'active')
+        toast({ title: 'Listing is live again', body: `“${l.title}” is visible in search.`, tone: 'success' })
+      }
+    } catch { /* toast shown by the store */ } finally { setBusyId(null) }
   }
-  const confirmRented = () => {
-    if (!renting) return
-    setListingStatus(renting.id, 'rented')
-    toast({ title: 'Marked as rented', body: 'Congratulations! The listing is no longer shown in search.', tone: 'success' })
-    setRenting(null)
+  const confirmRented = async () => {
+    if (!renting || busyId) return
+    setBusyId(renting.id)
+    try {
+      await setListingStatus(renting.id, 'rented')
+      toast({ title: 'Marked as rented', body: 'Congratulations! The listing is no longer shown in search.', tone: 'success' })
+      setRenting(null)
+    } catch { /* toast shown by the store */ } finally { setBusyId(null) }
   }
 
   /** `table` = compact icon buttons for the desktop table; otherwise labelled buttons for cards. */
@@ -80,7 +77,7 @@ export default function OwnerListingsPage() {
           <Pencil className="h-3.5 w-3.5" /> Edit
         </ButtonLink>
         {canToggle && (
-          <Button variant="outline" size="sm" onClick={() => togglePause(l)} aria-label={`${pauseLabel} ${l.title}`} title={pauseLabel} className={table ? 'w-9 px-0' : ''}>
+          <Button variant="outline" size="sm" onClick={() => void togglePause(l)} loading={busyId === l.id} aria-label={`${pauseLabel} ${l.title}`} title={pauseLabel} className={table ? 'w-9 px-0' : ''}>
             <PauseIcon className="h-3.5 w-3.5" />{!table && ` ${pauseLabel}`}
           </Button>
         )}
@@ -106,7 +103,9 @@ export default function OwnerListingsPage() {
         action={<ButtonLink to="/owner/listings/new"><Plus className="h-4 w-4" /> New listing</ButtonLink>}
       />
 
-      {listings.length === 0 ? (
+      {listings.length === 0 && loading ? (
+        <div className="grid gap-3 md:grid-cols-2">{[0, 1, 2, 3].map((i) => <div key={i} className="h-32 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+      ) : listings.length === 0 ? (
         <EmptyState
           icon={<Home className="h-6 w-6" />}
           title="You haven't posted a home yet"
@@ -138,7 +137,7 @@ export default function OwnerListingsPage() {
                       <tr key={l.id} className="align-middle transition-colors hover:bg-ink-50/60">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
-                            <Thumb src={l.images[0]} alt={l.title} className="h-12 w-16" />
+                            <Thumb src={coverImage(l)} alt={l.title} className="h-12 w-16" />
                             <div className="min-w-0 max-w-[14rem]">
                               <Link to={`/owner/listings/${l.id}/edit`} className="flex items-center gap-1.5 font-semibold text-ink-900 hover:text-brand-800">
                                 <span className="truncate">{l.title}</span>
@@ -156,7 +155,7 @@ export default function OwnerListingsPage() {
                         <td className="px-3 py-3"><ListingStatusBadge status={l.status} /></td>
                         <td className="whitespace-nowrap px-3 py-3 text-xs text-ink-600">
                           <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5 text-ink-400" /> {l.views.toLocaleString('en-US')} views</span>
-                          <span className="mt-1 flex items-center gap-1"><Users className="h-3.5 w-3.5 text-ink-400" /> {applicantCount.get(l.id) ?? 0} applicants</span>
+                          <span className="mt-1 flex items-center gap-1"><Users className="h-3.5 w-3.5 text-ink-400" /> {l.applicantsCount ?? 0} applicants</span>
                         </td>
                         <td className="w-[1%] px-4 py-3">{actions(l, true)}</td>
                       </tr>
@@ -170,7 +169,7 @@ export default function OwnerListingsPage() {
                 {visible.map((l) => (
                   <Card key={l.id} className="overflow-hidden">
                     <div className="flex gap-3 p-4">
-                      <Thumb src={l.images[0]} alt={l.title} className="h-20 w-24" />
+                      <Thumb src={coverImage(l)} alt={l.title} className="h-20 w-24" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <Link to={`/owner/listings/${l.id}/edit`} className="line-clamp-2 text-sm font-semibold text-ink-900 hover:text-brand-800">{l.title}</Link>
@@ -190,7 +189,7 @@ export default function OwnerListingsPage() {
                     )}
                     <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-ink-100 px-4 py-2.5 text-xs text-ink-500">
                       <span className="inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.views} views</span>
-                      <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {applicantCount.get(l.id) ?? 0} applicants</span>
+                      <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {l.applicantsCount ?? 0} applicants</span>
                       <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {formatDate(l.availableFrom, { day: 'numeric', month: 'short' })}</span>
                     </div>
                     <div className="border-t border-ink-100 px-4 py-3">{actions(l, false)}</div>
@@ -212,7 +211,7 @@ export default function OwnerListingsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setRenting(null)}>Cancel</Button>
-            <Button onClick={confirmRented}><KeyRound className="h-4 w-4" /> Mark as rented</Button>
+            <Button onClick={() => void confirmRented()} loading={!!renting && busyId === renting.id}><KeyRound className="h-4 w-4" /> Mark as rented</Button>
           </>
         }
       >

@@ -4,8 +4,9 @@ import { Button } from '@/components/ui'
 import { Thumb } from '@/components/owner/OwnerUi'
 import { checkImageFile, processImageFile } from '@/components/owner/imageUpload'
 import { cn, uid } from '@/lib/utils'
+import { errorMessage, uploadFiles } from '@/lib/api'
 
-interface Pending { id: string; name: string }
+interface Pending { id: string; name: string; stage: 'processing' | 'uploading'; progress: number }
 interface Rejected { id: string; name: string; reason: string }
 
 interface Props {
@@ -48,11 +49,18 @@ export function PhotoUploader({ images, max, error, setImages, onUseSamples }: P
     }
     setRejected(errs)
     if (!accepted.length) return
-    setPending((p) => [...p, ...accepted.map(({ file, id }) => ({ id, name: file.name }))])
+    setPending((p) => [...p, ...accepted.map(({ file, id }) => ({ id, name: file.name, stage: 'processing' as const, progress: 0 }))])
+    const update = (id: string, patch: Partial<Pending>) => setPending((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)))
     accepted.forEach(({ file, id }) => {
+      // 1. downscale to ≤1600px JPEG in the browser, 2. upload to the API, 3. keep the returned URL.
       processImageFile(file)
-        .then((dataUrl) => setImages((prev) => (prev.length >= max ? prev : [...prev, dataUrl])))
-        .catch(() => setRejected((r) => [...r, { id: uid('rej'), name: file.name, reason: "Couldn't read this image." }]))
+        .catch(() => { throw new Error("Couldn't read this image.") })
+        .then((jpeg) => {
+          update(id, { stage: 'uploading' })
+          return uploadFiles('listing_photo', [jpeg], { onProgress: (f) => update(id, { progress: f }) })
+        })
+        .then(([uploaded]) => setImages((prev) => (prev.length >= max ? prev : [...prev, uploaded.url])))
+        .catch((e) => setRejected((r) => [...r, { id: uid('rej'), name: file.name, reason: errorMessage(e, 'Upload failed.') }]))
         .finally(() => setPending((p) => p.filter((x) => x.id !== id)))
     })
   }
@@ -80,7 +88,7 @@ export function PhotoUploader({ images, max, error, setImages, onUseSamples }: P
         </span>
         <div>
           <p className="text-sm font-semibold text-ink-900">{full ? `You've added ${max} photos` : 'Drag photos here or upload from your device'}</p>
-          <p className="mt-0.5 text-xs text-ink-500">JPG, PNG, HEIC or WebP · up to 15 MB each · max {max} photos</p>
+          <p className="mt-0.5 text-xs text-ink-500">JPG, PNG, HEIC or WebP · up to 15 MB each · max {max} photos · resized to 1600px before upload</p>
         </div>
         <input
           ref={inputRef} id="listing-photo-input" type="file" accept="image/*" multiple className="sr-only" tabIndex={-1}
@@ -112,7 +120,7 @@ export function PhotoUploader({ images, max, error, setImages, onUseSamples }: P
       {(images.length > 0 || pending.length > 0) && (
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="Listing photos">
           {images.map((src, i) => (
-            <li key={`${i}:${src.length}:${src.slice(-24)}`} className="min-w-0 overflow-hidden rounded-xl border border-ink-200 bg-white">
+            <li key={`${i}:${src}`} className="min-w-0 overflow-hidden rounded-xl border border-ink-200 bg-white">
               <div className="relative">
                 <Thumb src={src} alt={`Photo ${i + 1}${i === 0 ? ' (cover)' : ''}`} className="aspect-[4/3] h-auto w-full rounded-none!" />
                 {i === 0 && <span className="absolute left-1.5 top-1.5 rounded-md bg-ink-900/80 px-1.5 py-0.5 text-[10px] font-bold text-white">COVER</span>}
@@ -130,7 +138,10 @@ export function PhotoUploader({ images, max, error, setImages, onUseSamples }: P
             <li key={p.id} className="min-w-0 overflow-hidden rounded-xl border border-dashed border-ink-200 bg-ink-50" aria-live="polite">
               <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 px-2 text-center">
                 <Loader2 className="h-5 w-5 animate-spin text-brand-700" />
-                <span className="text-xs font-medium text-ink-600">Processing…</span>
+                <span className="text-xs font-medium text-ink-600">{p.stage === 'processing' ? 'Resizing…' : `Uploading ${Math.round(p.progress * 100)}%`}</span>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-200" role="progressbar" aria-label={`Uploading ${p.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.progress * 100)}>
+                  <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${p.stage === 'processing' ? 5 : Math.max(5, p.progress * 100)}%` }} />
+                </div>
                 <span className="w-full truncate text-[11px] text-ink-400">{p.name}</span>
               </div>
             </li>
@@ -141,7 +152,7 @@ export function PhotoUploader({ images, max, error, setImages, onUseSamples }: P
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-start gap-1.5 text-xs text-ink-500">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          Photos are stored in your browser for this demo. In production they upload to cloud storage.
+          Photos are resized in your browser and uploaded to StayBridge. The first photo is the cover.
         </p>
         <span className={cn('text-xs', error ? 'text-red-600' : 'text-ink-400')}>
           {error ?? `${images.length}/${max} photos`}

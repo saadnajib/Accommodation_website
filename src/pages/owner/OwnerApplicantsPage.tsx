@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Briefcase, CalendarDays, ChevronDown, ChevronRight, Hourglass, ShieldCheck, Users } from 'lucide-react'
-import { useCurrentUser, useStore } from '@/store/useStore'
+import { coverImage, useLoad, useMyApplications, useStore } from '@/store/useStore'
 import { ApplicationStatusBadge, Avatar, Badge, Card, EmptyState, PageHeader, Select, Tabs } from '@/components/ui'
 import { Thumb } from '@/components/owner/OwnerUi'
 import {
-  CLOSED_STATUSES, IN_PROGRESS_STATUSES, affordabilityRatio, isVerifying, priceDeltaPct, ratioTone, renterDisplayName,
+  CLOSED_STATUSES, IN_PROGRESS_STATUSES, affordabilityRatio, isVerifying, priceDeltaPct, ratioTone,
 } from '@/components/owner/utils'
 import { cn, formatDate, formatMoney } from '@/lib/utils'
-import type { Application, ApplicationStatus, Listing, User } from '@/types'
+import type { Application, ApplicationStatus, Listing, ListingSummary, User } from '@/types'
 
 type TabKey = 'decision' | 'progress' | 'placed' | 'closed'
 
@@ -27,35 +27,32 @@ const EMPTY_COPY: Record<TabKey, { title: string; description: string }> = {
 }
 
 export default function OwnerApplicantsPage() {
-  const me = useCurrentUser()
-  const allApps = useStore((s) => s.applications)
-  const allListings = useStore((s) => s.listings)
-  const users = useStore((s) => s.users)
-  const meId = me?.id
-  // Open the first tab that has something in it (usually "Needs decision").
-  const [tab, setTab] = useState<TabKey>(() => {
-    const mine = allApps.filter((a) => a.ownerId === meId)
-    return (Object.keys(TAB_STATUSES) as TabKey[]).find((k) => mine.some((a) => TAB_STATUSES[k].includes(a.status))) ?? 'decision'
-  })
+  const apps = useMyApplications()
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const { loading } = useLoad(() => fetchMyApplications(), [fetchMyApplications])
+  const fullListings = useStore((s) => s.listingsById)
+  const summaries = useStore((s) => s.listingSummaries)
+  const usersById = useStore((s) => s.usersById)
+  const verifyingCounts = useStore((s) => s.verifyingCounts)
+  const [pickedTab, setTab] = useState<TabKey | null>(null)
   const [listingFilter, setListingFilter] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
 
-  const apps = useMemo(
-    () => allApps.filter((a) => a.ownerId === meId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [allApps, meId],
-  )
-  const listingById = useMemo(() => new Map(allListings.map((l) => [l.id, l])), [allListings])
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
+  // Open the first tab that has something in it (usually "Needs decision") until the user picks one.
+  const tab: TabKey = pickedTab ?? (Object.keys(TAB_STATUSES) as TabKey[]).find((k) => apps.some((a) => TAB_STATUSES[k].includes(a.status))) ?? 'decision'
+  const listingById = useMemo(() => ({ get: (id: string): Listing | ListingSummary | undefined => fullListings[id] ?? summaries[id] }), [fullListings, summaries])
+  const userById = useMemo(() => ({ get: (id: string): User | undefined => usersById[id] }), [usersById])
 
   const inScope = apps.filter((a) => !listingFilter || a.listingId === listingFilter)
-  const verifyingCount = inScope.filter((a) => isVerifying(a.status)).length
+  // The API never sends applications still being verified to owners — only counts per listing.
+  const verifyingCount = listingFilter ? verifyingCounts[listingFilter] ?? 0 : Object.values(verifyingCounts).reduce((sum, n) => sum + n, 0)
   const visible = inScope.filter((a) => !isVerifying(a.status))
   const inTab = visible.filter((a) => TAB_STATUSES[tab].includes(a.status))
 
   const listingOptions = useMemo(() => {
-    const ids = [...new Set(apps.map((a) => a.listingId))]
+    const ids = [...new Set([...apps.map((a) => a.listingId), ...Object.keys(verifyingCounts)])]
     return ids.map((id) => ({ value: id, label: listingById.get(id)?.title ?? 'Removed listing' }))
-  }, [apps, listingById])
+  }, [apps, listingById, verifyingCounts])
 
   const groupMap = new Map<string, Application[]>()
   for (const a of inTab) groupMap.set(a.listingId, [...(groupMap.get(a.listingId) ?? []), a])
@@ -101,7 +98,9 @@ export default function OwnerApplicantsPage() {
         </div>
       )}
 
-      {groups.length === 0 ? (
+      {groups.length === 0 && loading ? (
+        <div className="space-y-3">{[0, 1].map((i) => <div key={i} className="h-28 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+      ) : groups.length === 0 ? (
         <EmptyState icon={<Users className="h-6 w-6" />} {...EMPTY_COPY[tab]} />
       ) : (
         <div className="space-y-4">
@@ -114,7 +113,7 @@ export default function OwnerApplicantsPage() {
                   type="button" onClick={() => toggle(listingId)} aria-expanded={open}
                   className="flex w-full items-center gap-3 border-b border-ink-100 bg-ink-50/50 px-4 py-3 text-left transition-colors hover:bg-ink-50"
                 >
-                  <Thumb src={listing?.images[0]} alt={listing?.title ?? 'Listing'} className="h-10 w-14" />
+                  <Thumb src={coverImage(listing)} alt={listing?.title ?? 'Listing'} className="h-10 w-14" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900">{listing?.title ?? 'Removed listing'}</p>
                     <p className="truncate text-xs text-ink-400">
@@ -138,8 +137,9 @@ export default function OwnerApplicantsPage() {
   )
 }
 
-function ApplicantRow({ app, listing, renter }: { app: Application; listing?: Listing; renter?: User }) {
-  const name = renterDisplayName(app, renter)
+function ApplicantRow({ app, listing, renter }: { app: Application; listing?: Listing | ListingSummary; renter?: User }) {
+  // The API anonymises the renter ("Jonas W.") until contact is unlocked.
+  const name = renter?.name ?? 'StayBridge renter'
   const ratio = affordabilityRatio(app)
   const asking = listing?.price ?? app.proposedPrice
   const delta = priceDeltaPct(app.proposedPrice, asking)

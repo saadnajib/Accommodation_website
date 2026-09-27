@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, FileSearch } from 'lucide-react'
 import { Button, Card, CardBody, CardHeader, EmptyState } from '@/components/ui'
-import { useApplication, useListing, useStore, useUser } from '@/store/useStore'
+import { useApplication, useApplicationEvents, useApplicationMeta, useListing, useLoad, useStore, useUser } from '@/store/useStore'
 import { formatDate, formatMoney } from '@/lib/utils'
 import { ActionModal } from '@/components/admin/ActionModal'
 import { ActionPanel } from '@/components/admin/ActionPanel'
@@ -18,11 +18,22 @@ export default function AdminApplicationDetailPage() {
   const renter = useUser(app?.renterId)
   const owner = useUser(app?.ownerId)
   const feeCurrency = useStore((s) => s.fees.currency)
+  const events = useApplicationEvents(id)
+  const meta = useApplicationMeta(id)
+  const fetchApplication = useStore((s) => s.fetchApplication)
+  const fetchAdminUsers = useStore((s) => s.fetchAdminUsers)
+  const usersLoaded = useStore((s) => s.adminUsers !== null)
+  const { loading } = useLoad(() => (id ? fetchApplication(id) : Promise.resolve(null)), [id, fetchApplication])
+  // Per-user application/listing counts for the person cards.
+  useLoad(() => (usersLoaded ? Promise.resolve() : fetchAdminUsers()), [fetchAdminUsers])
   const run = useRunAction()
   const markFee = useMarkFee()
   const [action, setAction] = useState<ActionSpec | null>(null)
   const [feeSide, setFeeSide] = useState<'renter' | 'owner' | null>(null)
 
+  if ((!app || !meta) && loading) {
+    return <div className="flex min-h-[40vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
   if (!app) {
     return (
       <EmptyState
@@ -50,7 +61,7 @@ export default function AdminApplicationDetailPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_330px]">
         <aside className="order-first lg:order-last lg:sticky lg:top-24 lg:self-start">
-          <ActionPanel app={app} currency={currency} onAction={setAction} onMarkFee={setFeeSide} />
+          <ActionPanel app={app} events={events} allowed={meta?.allowedTransitions} currency={currency} onAction={setAction} onMarkFee={setFeeSide} />
         </aside>
 
         <div className="min-w-0 space-y-6">
@@ -64,10 +75,10 @@ export default function AdminApplicationDetailPage() {
           <MessageCard app={app} />
           <PricingCard app={app} listing={listing} renter={renter} onMarkFee={setFeeSide} />
           <Card>
-            <CardHeader title="Timeline" description={`${app.timeline.length} event${app.timeline.length === 1 ? '' : 's'}`} />
-            <CardBody><Timeline events={app.timeline} /></CardBody>
+            <CardHeader title="Timeline" description={`${events.length} event${events.length === 1 ? '' : 's'}`} />
+            <CardBody><Timeline events={events} /></CardBody>
           </Card>
-          <NotesCard key={app.id} app={app} />
+          <NotesCard key={`${app.id}:${app.adminNotes ?? ''}`} app={app} />
         </div>
       </div>
 
@@ -91,7 +102,7 @@ export default function AdminApplicationDetailPage() {
           noNote
           onClose={() => setFeeSide(null)}
           title={`Mark ${feeSide} fee as received?`}
-          body={`Use this for offline payments (bank transfer, cash). ${formatMoney(feeSide === 'renter' ? app.renterFee : app.ownerFee, currency)} will be recorded as paid by the ${feeSide}.${(feeSide === 'renter' ? app.ownerFeePaid : app.renterFeePaid) ? ' Both fees will then be paid and contact unlocks automatically.' : ''}`}
+          body={`Use this for offline payments (bank transfer, cash). ${formatMoney((feeSide === 'renter' ? app.renterFee : app.ownerFee) ?? 0, currency)} will be recorded as paid by the ${feeSide}.${(feeSide === 'renter' ? app.ownerFeePaid : app.renterFeePaid) ? ' Both fees will then be paid and contact unlocks automatically.' : ''}`}
           confirmLabel="Mark received"
           onConfirm={() => markFee(app, feeSide)}
         />

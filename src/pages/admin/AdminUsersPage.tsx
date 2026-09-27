@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Star, Users } from 'lucide-react'
+import { Lock, Search, Star, Users } from 'lucide-react'
 import { Avatar, Badge, Card, EmptyState, Input, PageHeader, Select, VerificationBadge } from '@/components/ui'
-import { useStore } from '@/store/useStore'
+import { useLoad, useStore, type AdminUserRow } from '@/store/useStore'
 import { formatDate } from '@/lib/utils'
-import type { Role, User, VerificationStatus } from '@/types'
+import type { Rating, Role, VerificationStatus } from '@/types'
 import { TenantPassBadge } from '@/components/admin/AdminBits'
 
 type RoleFilter = 'all' | Role
@@ -19,39 +19,25 @@ const VERIFY_OPTIONS: Array<{ value: VerificationStatus; label: string }> = [
   { value: 'rejected', label: 'Rejected' },
 ]
 
+const EMPTY: AdminUserRow[] = []
+const ratingOf = (r: AdminUserRow['rating']): Rating | undefined => (r == null ? undefined : typeof r === 'number' ? { avg: r, count: 1 } : r)
+
 export default function AdminUsersPage() {
-  const users = useStore((s) => s.users)
-  const applications = useStore((s) => s.applications)
-  const listings = useStore((s) => s.listings)
-  const reviews = useStore((s) => s.reviews)
+  const users = useStore((s) => s.adminUsers) ?? EMPTY
   const currentUserId = useStore((s) => s.currentUserId)
   const setUserVerification = useStore((s) => s.setUserVerification)
+  const fetchAdminUsers = useStore((s) => s.fetchAdminUsers)
+  const { loading } = useLoad(() => fetchAdminUsers(), [fetchAdminUsers])
   const toast = useStore((s) => s.toast)
   const [q, setQ] = useState('')
   const [role, setRole] = useState<RoleFilter>('all')
-
-  const stats = useMemo(() => {
-    const m = new Map<string, { apps: number; listings: number; latestApp?: string; latestAt?: string; ratingSum: number; ratingCount: number }>()
-    const get = (id: string) => {
-      let s = m.get(id)
-      if (!s) { s = { apps: 0, listings: 0, ratingSum: 0, ratingCount: 0 }; m.set(id, s) }
-      return s
-    }
-    applications.forEach((a) => {
-      const s = get(a.renterId)
-      s.apps++
-      if (!s.latestAt || a.createdAt > s.latestAt) { s.latestAt = a.createdAt; s.latestApp = a.id }
-    })
-    listings.forEach((l) => { get(l.ownerId).listings++ })
-    reviews.forEach((r) => { const s = get(r.toId); s.ratingSum += r.rating; s.ratingCount++ })
-    return m
-  }, [applications, listings, reviews])
+  const [savingId, setSavingId] = useState<string | null>(null)
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return users
       .filter((u) => role === 'all' || u.role === role)
-      .filter((u) => !needle || u.name.toLowerCase().includes(needle) || u.email.toLowerCase().includes(needle) || (u.phone ?? '').includes(needle))
+      .filter((u) => !needle || u.name.toLowerCase().includes(needle) || (u.email ?? '').toLowerCase().includes(needle) || (u.phone ?? '').includes(needle))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }, [users, q, role])
 
@@ -61,13 +47,16 @@ export default function AdminUsersPage() {
     admin: users.filter((u) => u.role === 'admin').length,
   }), [users])
 
-  const changeVerification = (u: User, status: VerificationStatus) => {
-    setUserVerification(u.id, status)
-    toast({ title: 'Verification updated', body: `${u.name} is now “${VERIFY_OPTIONS.find((o) => o.value === status)?.label}”.`, tone: 'success' })
+  const changeVerification = async (u: AdminUserRow, status: VerificationStatus) => {
+    setSavingId(u.id)
+    try {
+      await setUserVerification(u.id, status)
+      toast({ title: 'Verification updated', body: `${u.name} is now “${VERIFY_OPTIONS.find((o) => o.value === status)?.label}”.`, tone: 'success' })
+    } catch { /* toast shown by the store */ } finally { setSavingId(null) }
   }
 
-  const nameLink = (u: User) => {
-    if (u.role === 'renter') { const id = stats.get(u.id)?.latestApp; return id ? `/admin/applications/${id}` : null }
+  const nameLink = (u: AdminUserRow) => {
+    if (u.role === 'renter') return (u.applicationsCount ?? 0) > 0 ? `/admin/applications?q=${encodeURIComponent(u.name)}` : null
     if (u.role === 'owner') return `/admin/listings?owner=${u.id}`
     return null
   }
@@ -89,7 +78,9 @@ export default function AdminUsersPage() {
           ]} />
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && loading ? (
+        <div className="space-y-2">{[0, 1, 2, 3].map((i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-ink-100" />)}</div>
+      ) : rows.length === 0 ? (
         <EmptyState icon={<Users className="h-6 w-6" />} title="No users match" description="Try another search or role." />
       ) : (
         <Card className="overflow-hidden">
@@ -108,7 +99,8 @@ export default function AdminUsersPage() {
               </thead>
               <tbody className="divide-y divide-ink-100">
                 {rows.map((u) => {
-                  const s = stats.get(u.id)
+                  const rating = ratingOf(u.rating)
+                  const locked = !!u.lockedUntil && new Date(u.lockedUntil) > new Date()
                   const link = nameLink(u)
                   const isSelf = u.id === currentUserId
                   return (
@@ -121,6 +113,7 @@ export default function AdminUsersPage() {
                               ? <Link to={link} className="font-medium text-ink-900 hover:text-brand-700 hover:underline">{u.name}</Link>
                               : <span className="font-medium text-ink-900">{u.name}{isSelf && <span className="ml-1 text-xs text-ink-400">(you)</span>}</span>}
                             <p className="truncate text-xs text-ink-500">{u.email}</p>
+                            {locked && <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-red-700"><Lock className="h-3 w-3" /> Locked after {u.failedLogins ?? 'several'} failed sign-ins</p>}
                           </div>
                         </div>
                       </td>
@@ -138,7 +131,8 @@ export default function AdminUsersPage() {
                             <select
                               aria-label={`Set verification for ${u.name}`}
                               value={u.verification}
-                              onChange={(e) => changeVerification(u, e.target.value as VerificationStatus)}
+                              disabled={savingId === u.id}
+                              onChange={(e) => void changeVerification(u, e.target.value as VerificationStatus)}
                               className="h-8 rounded-lg border border-ink-200 bg-white px-2 text-xs text-ink-700 hover:border-ink-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
                             >
                               {VERIFY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -147,13 +141,13 @@ export default function AdminUsersPage() {
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right text-ink-600">
-                        {u.role === 'renter' && <>{s?.apps ?? 0} application{s?.apps === 1 ? '' : 's'}</>}
-                        {u.role === 'owner' && <>{s?.listings ?? 0} listing{s?.listings === 1 ? '' : 's'}</>}
+                        {u.role === 'renter' && <>{u.applicationsCount ?? 0} application{u.applicationsCount === 1 ? '' : 's'}</>}
+                        {u.role === 'owner' && <>{u.listingsCount ?? 0} listing{u.listingsCount === 1 ? '' : 's'}</>}
                         {u.role === 'admin' && <span className="text-ink-300">—</span>}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
-                        {s?.ratingCount
-                          ? <span className="inline-flex items-center gap-1 text-ink-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> {(s.ratingSum / s.ratingCount).toFixed(1)} <span className="text-xs text-ink-400">({s.ratingCount})</span></span>
+                        {rating?.count
+                          ? <span className="inline-flex items-center gap-1 text-ink-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" /> {rating.avg.toFixed(1)} <span className="text-xs text-ink-400">({rating.count})</span></span>
                           : <span className="text-ink-300">—</span>}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-ink-500">{formatDate(u.createdAt)}</td>
@@ -165,7 +159,7 @@ export default function AdminUsersPage() {
           </div>
         </Card>
       )}
-      <p className="mt-3 text-xs text-ink-400">Click a renter to open their latest application, or an owner to see their listings.</p>
+      <p className="mt-3 text-xs text-ink-400">Click a renter to see their applications, or an owner to see their listings.</p>
     </div>
   )
 }

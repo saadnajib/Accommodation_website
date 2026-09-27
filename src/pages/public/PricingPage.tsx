@@ -6,12 +6,13 @@ import { computeFees } from '@/lib/fees'
 import { Badge, Button, Card, SectionHeading } from '@/components/ui'
 import { FaqItem } from '@/components/listings/FaqItem'
 import { cn, formatMoney } from '@/lib/utils'
+import { useTenantPassCheckout } from '@/components/renter/TenantPassCheckout'
 
 const pct = (r: number) => `${Math.round(r * 100)}%`
 
 export default function PricingPage() {
   const fees = useStore((s) => s.fees)
-  const buyTenantPass = useStore((s) => s.buyTenantPass)
+  const { openCheckout, modal: passCheckout } = useTenantPassCheckout()
   const user = useCurrentUser()
   const nav = useNavigate()
   const [rent, setRent] = useState(1200)
@@ -24,7 +25,7 @@ export default function PricingPage() {
   const onBuyPass = () => {
     if (!user) { nav('/signup?role=renter'); return }
     if (user.role !== 'renter') return
-    buyTenantPass()
+    openCheckout()
   }
   const passState = !user ? 'guest' : user.role !== 'renter' ? 'not-renter' : user.hasTenantPass ? 'owned' : 'can-buy'
 
@@ -153,6 +154,7 @@ export default function PricingPage() {
           <FaqItem q="Do owners pay to list?" a="No. Listing is free; the owner success fee applies only when a tenant is placed through StayBridge." />
         </div>
       </section>
+      {passCheckout}
     </div>
   )
 }

@@ -1,13 +1,13 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Bell, Building2, CheckCircle2, Clock, CreditCard, Eye, MessageSquare, Plus, Sparkles, UserCheck, Wallet,
 } from 'lucide-react'
-import { useCurrentUser, useStore } from '@/store/useStore'
+import { coverImage, useCurrentUser, useLoad, useMyApplications, useMyListings, useStore } from '@/store/useStore'
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, PageHeader, Select, Stat } from '@/components/ui'
 import { ButtonLink, Thumb } from '@/components/owner/OwnerUi'
 import { FeatureListingModal } from '@/components/owner/FeatureListingModal'
-import { anonName, greeting } from '@/components/owner/utils'
+import { greeting } from '@/components/owner/utils'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
 import type { Listing } from '@/types'
 
@@ -22,35 +22,37 @@ interface ActionItem {
 
 export default function OwnerOverviewPage() {
   const me = useCurrentUser()
-  const allListings = useStore((s) => s.listings)
-  const allApps = useStore((s) => s.applications)
-  const users = useStore((s) => s.users)
-  const allNotifications = useStore((s) => s.notifications)
+  const listings = useMyListings()
+  const apps = useMyApplications()
+  const listingById = useStore((s) => s.listingsById)
+  const summaries = useStore((s) => s.listingSummaries)
+  const userById = useStore((s) => s.usersById)
+  const verifyingCounts = useStore((s) => s.verifyingCounts)
+  const notifications = useStore((s) => s.notifications).slice(0, 5)
   const fees = useStore((s) => s.fees)
   const markRead = useStore((s) => s.markNotificationRead)
+  const fetchMyListings = useStore((s) => s.fetchMyListings)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const fetchNotifications = useStore((s) => s.fetchNotifications)
+  const { loading } = useLoad(() => Promise.all([fetchMyListings(), fetchMyApplications(), fetchNotifications()]), [fetchMyListings, fetchMyApplications, fetchNotifications])
   const [featuring, setFeaturing] = useState<Listing | null>(null)
   const [upsellId, setUpsellId] = useState('')
-
-  const meId = me?.id
-  const listings = useMemo(() => allListings.filter((l) => l.ownerId === meId), [allListings, meId])
-  const apps = useMemo(() => allApps.filter((a) => a.ownerId === meId), [allApps, meId])
-  const notifications = useMemo(() => allNotifications.filter((n) => n.userId === meId).slice(0, 5), [allNotifications, meId])
-  const listingById = useMemo(() => new Map(allListings.map((l) => [l.id, l])), [allListings])
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
 
   const live = listings.filter((l) => l.status === 'active')
   const totalViews = listings.reduce((sum, l) => sum + l.views, 0)
   const waiting = apps.filter((a) => a.status === 'sent_to_owner')
   const placed = apps.filter((a) => a.status === 'completed')
-  const feesPaid = apps.filter((a) => a.ownerFeePaid).reduce((sum, a) => sum + a.ownerFee, 0)
-  const verifying = apps.filter((a) => ['submitted', 'under_review', 'verified'].includes(a.status)).length
+  const feesPaid = apps.filter((a) => a.ownerFeePaid).reduce((sum, a) => sum + (a.ownerFee ?? 0), 0)
+  // Owners never receive applications still being verified — only a count per listing.
+  const verifying = Object.values(verifyingCounts).reduce((sum, n) => sum + n, 0)
   const upsellCandidates = live.filter((l) => !l.featured)
   const upsellListing = upsellCandidates.find((l) => l.id === upsellId) ?? upsellCandidates[0]
 
   const actions: ActionItem[] = []
   for (const a of apps) {
-    const l = listingById.get(a.listingId)
-    const name = anonName(userById.get(a.renterId))
+    const l = listingById[a.listingId] ?? summaries[a.listingId]
+    // The API already anonymises the renter's name until contact is unlocked.
+    const name = userById[a.renterId]?.name ?? 'StayBridge renter'
     const title = l?.title ?? 'your listing'
     if (a.status === 'sent_to_owner') {
       actions.push({
@@ -61,13 +63,13 @@ export default function OwnerOverviewPage() {
     } else if (a.status === 'awaiting_fees' && !a.ownerFeePaid) {
       actions.push({
         key: a.id, icon: <CreditCard className="h-5 w-5" />, tone: 'bg-amber-50 text-amber-700',
-        title: <>Pay the success fee to unlock contact</>, body: <>You accepted {name} for “{title}”. Fee: {formatMoney(a.ownerFee, fees.currency)}.</>,
+        title: <>Pay the success fee to unlock contact</>, body: <>You accepted {name} for “{title}”. Fee: {formatMoney(a.ownerFee ?? 0, l?.currency ?? fees.currency)}.</>,
         cta: { label: 'Pay success fee', to: `/owner/applications/${a.id}`, variant: 'accent' },
       })
     } else if (a.status === 'contact_unlocked') {
       actions.push({
         key: a.id, icon: <MessageSquare className="h-5 w-5" />, tone: 'bg-emerald-50 text-emerald-700',
-        title: <>Contact unlocked with {userById.get(a.renterId)?.name ?? name}</>, body: <>Arrange a viewing and sign the contract for “{title}”.</>,
+        title: <>Contact unlocked with {name}</>, body: <>Arrange a viewing and sign the contract for “{title}”.</>,
         cta: { label: 'Message tenant', to: `/messages/${a.id}`, variant: 'outline' },
       })
     }
@@ -149,7 +151,9 @@ export default function OwnerOverviewPage() {
               title="Your listings"
               action={<Link to="/owner/listings" className="text-sm font-semibold text-brand-700 hover:text-brand-800">Manage all</Link>}
             />
-            {listings.length === 0 ? (
+            {listings.length === 0 && loading ? (
+              <CardBody><div className="space-y-2">{[0, 1].map((i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-ink-100" />)}</div></CardBody>
+            ) : listings.length === 0 ? (
               <CardBody>
                 <EmptyState
                   icon={<Building2 className="h-6 w-6" />}
@@ -163,7 +167,7 @@ export default function OwnerOverviewPage() {
                 {listings.slice(0, 4).map((l) => (
                   <li key={l.id}>
                     <Link to={`/owner/listings/${l.id}/edit`} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-ink-50">
-                      <Thumb src={l.images[0]} alt={l.title} className="h-12 w-16" />
+                      <Thumb src={coverImage(l)} alt={l.title} className="h-12 w-16" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-ink-900">{l.title}</p>
                         <p className="truncate text-xs text-ink-400">{l.area} · {l.city} · {formatMoney(l.price, l.currency)}/mo</p>
@@ -227,7 +231,7 @@ export default function OwnerOverviewPage() {
                   return (
                     <li key={n.id}>
                       {n.link ? (
-                        <Link to={n.link} onClick={() => markRead(n.id)} className="block px-5 py-3 transition-colors hover:bg-ink-50">{inner}</Link>
+                        <Link to={n.link} onClick={() => void markRead(n.id)} className="block px-5 py-3 transition-colors hover:bg-ink-50">{inner}</Link>
                       ) : (
                         <div className="px-5 py-3">{inner}</div>
                       )}

@@ -1,4 +1,4 @@
-import type { Application, ApplicationStatus, Listing, User } from '@/types'
+import type { Application, ApplicationStatus, Listing } from '@/types'
 import { PROPERTY_TYPES } from '@/lib/status'
 
 /** Statuses during which StayBridge is still verifying the renter — owners see counts only. */
@@ -12,20 +12,6 @@ export function isVerifying(status: ApplicationStatus) {
 
 export function propertyTypeLabel(type: Listing['type']) {
   return PROPERTY_TYPES.find((t) => t.value === type)?.label ?? type
-}
-
-/** "Jonas Weber" -> "Jonas W." */
-export function anonName(user?: Pick<User, 'name'> | null) {
-  if (!user) return 'StayBridge renter'
-  const [first, ...rest] = user.name.trim().split(/\s+/)
-  const last = rest.at(-1)
-  return last ? `${first} ${last[0].toUpperCase()}.` : first
-}
-
-/** Owners only see the full name once contact has been unlocked. */
-export function renterDisplayName(app: Pick<Application, 'contactUnlocked'>, user?: Pick<User, 'name'> | null) {
-  if (!user) return 'StayBridge renter'
-  return app.contactUnlocked ? user.name : anonName(user)
 }
 
 /** Monthly income divided by offered rent, e.g. 3.2 (×). */

@@ -3,16 +3,16 @@ import { CreditCard, MessageSquare, Star } from 'lucide-react'
 import type { Application } from '@/types'
 import type { AttentionKind } from '@/components/shared/applicationUtils'
 import { formatMoney } from '@/lib/utils'
-import { useListing } from '@/store/useStore'
+import { useListingSummary } from '@/store/useStore'
 
 const btn = 'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition-colors'
 
 /** Inline CTA describing the next thing the renter must do for an application. */
 export function AttentionAction({ application, kind }: { application: Application; kind: AttentionKind }) {
-  const listing = useListing(application.listingId)
+  const listing = useListingSummary(application.listingId)
   const cfg = {
     pay: {
-      text: `Owner accepted — pay your ${formatMoney(application.renterFee, listing?.currency)} service fee to unlock contact.`,
+      text: `Owner accepted — pay your ${formatMoney(application.renterFee ?? 0, listing?.currency)} service fee to unlock contact.`,
       cta: 'Pay fee', to: `/dashboard/applications/${application.id}?pay=1`, icon: CreditCard, cls: 'bg-accent-500 text-ink-900 hover:bg-accent-400',
     },
     message: {

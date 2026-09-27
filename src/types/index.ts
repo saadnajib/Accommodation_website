@@ -2,10 +2,14 @@ export type Role = 'renter' | 'owner' | 'admin'
 
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
 
+/**
+ * A user as serialized by the API for the current viewer. `email`/`phone` are only present for
+ * the signed-in user themself, admins, or once contact has been unlocked.
+ */
 export interface User {
   id: string
   name: string
-  email: string
+  email?: string
   role: Role
   phone?: string
   avatarUrl?: string
@@ -28,8 +32,8 @@ export interface Listing {
   type: PropertyType
   city: string
   area: string
-  /** Exact address is private; only revealed after contact is unlocked. */
-  address: string
+  /** Exact address is private; the API only sends it to the owner, admins, or after contact is unlocked. */
+  address?: string
   price: number
   currency: string
   deposit: number
@@ -46,9 +50,28 @@ export interface Listing {
   status: ListingStatus
   /** Paid boost: appears first in search and on the home page. */
   featured: boolean
+  featuredUntil?: string | null
   views: number
   createdAt: string
+  updatedAt?: string
   rejectionReason?: string
+  /** Only on the owner's own listings (GET /me/listings). */
+  applicantsCount?: number
+  /** Only on admin listing rows (GET /admin/listings). */
+  ownerName?: string
+}
+
+/** Compact listing attached to application rows (GET /me/applications). */
+export interface ListingSummary {
+  id: string
+  title: string
+  city: string
+  area: string
+  price: number
+  currency: string
+  images?: string[]
+  image?: string
+  status?: ListingStatus
 }
 
 export type ApplicationStatus =
@@ -67,17 +90,24 @@ export type ApplicationStatus =
 export interface TimelineEvent {
   status: ApplicationStatus
   at: string
-  note?: string
+  note?: string | null
   by: Role | 'system'
 }
 
+export type IdType = 'passport' | 'national_id' | 'driving_licence'
+
+/**
+ * Verification summary as serialized per viewer: owners get only idType/submittedAt/hasProofOfIncome,
+ * renters additionally the masked ID number, admins also the private file ids.
+ */
 export interface RenterVerification {
-  idType: 'passport' | 'national_id' | 'driving_licence'
-  idNumberMasked: string
-  idDocumentName: string
-  selfieName: string
-  proofOfIncomeName?: string
+  idType: IdType
   submittedAt: string
+  hasProofOfIncome: boolean
+  idNumberMasked?: string | null
+  idDocumentFileId?: string | null
+  selfieFileId?: string | null
+  proofOfIncomeFileId?: string | null
 }
 
 export interface RenterProfile {
@@ -108,14 +138,17 @@ export interface Application {
   verification?: RenterVerification
   profile?: RenterProfile
   status: ApplicationStatus
-  timeline: TimelineEvent[]
-  renterFee: number
-  ownerFee: number
+  /** Renter and admin only. */
+  renterFee?: number
+  /** Owner and admin only. */
+  ownerFee?: number
   renterFeePaid: boolean
   ownerFeePaid: boolean
   contactUnlocked: boolean
-  adminNotes: string
+  /** Admin only. */
+  adminNotes?: string
   createdAt: string
+  updatedAt?: string
 }
 
 export interface Message {
@@ -138,7 +171,7 @@ export interface Review {
 
 export interface Notification {
   id: string
-  userId: string
+  userId?: string
   title: string
   body: string
   link?: string
@@ -159,3 +192,15 @@ export interface FeeSettings {
   featuredListingPrice: number
   currency: string
 }
+
+export interface UploadedFile {
+  id: string
+  kind: 'listing_photo' | 'id_document' | 'selfie' | 'proof_of_income'
+  mime: string
+  size: number
+  name: string
+  url: string
+  createdAt: string
+}
+
+export interface Rating { avg: number; count: number }

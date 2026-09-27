@@ -3,7 +3,7 @@ import type { Listing } from '@/types'
 import { useStore } from '@/store/useStore'
 import { MockPaymentModal } from './OwnerUi'
 
-/** Mock checkout for the "Featured listing" boost. Calls featureListing() on success (which toasts). */
+/** Mock checkout for the "Featured listing" boost: POST /listings/:id/feature (the store toasts success/failure). */
 export function FeatureListingModal({ listing, onClose }: { listing: Listing | null; onClose: () => void }) {
   const fees = useStore((s) => s.fees)
   const featureListing = useStore((s) => s.featureListing)
@@ -24,7 +24,7 @@ export function FeatureListingModal({ listing, onClose }: { listing: Listing | n
           </p>
         </div>
       }
-      onPaid={() => listing && featureListing(listing.id)}
+      onPaid={(card) => (listing ? featureListing(listing.id, card) : Promise.resolve())}
     />
   )
 }

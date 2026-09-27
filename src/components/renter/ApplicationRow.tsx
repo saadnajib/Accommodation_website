@@ -3,17 +3,18 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, MapPin } from 'lucide-react'
 import type { Application } from '@/types'
 import { ApplicationStatusBadge } from '@/components/ui'
-import { useListing } from '@/store/useStore'
+import { coverImage, useListingSummary } from '@/store/useStore'
 import { formatMoney, timeAgo } from '@/lib/utils'
 
 /** Compact clickable row card for a renter's application. */
 export function ApplicationRow({ application, extra }: { application: Application; extra?: ReactNode }) {
-  const listing = useListing(application.listingId)
+  const listing = useListingSummary(application.listingId)
+  const img = coverImage(listing)
   return (
     <div className="group rounded-2xl border border-ink-200/80 bg-white shadow-card transition-all hover:-translate-y-0.5 hover:shadow-lift">
       <Link to={`/dashboard/applications/${application.id}`} className="flex items-center gap-3 p-3 sm:gap-4 sm:p-4 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
         <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-ink-100 sm:h-20 sm:w-24">
-          {listing?.images[0] && <img src={listing.images[0]} alt={listing.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />}
+          {listing && img && <img src={img} alt={listing.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

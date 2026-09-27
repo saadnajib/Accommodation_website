@@ -1,14 +1,13 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight, BadgeCheck, Building2, FileSearch, HandCoins, KeyRound, Lock, MapPin, Quote, Search, ShieldCheck,
   Sparkles, Star, UserCheck, Users,
 } from 'lucide-react'
-import { useStore } from '@/store/useStore'
+import { useListingQuery } from '@/store/useStore'
 import { PROPERTY_TYPES } from '@/lib/status'
 import { Button, Card, SectionHeading } from '@/components/ui'
 import { ListingCard } from '@/components/listings/ListingCard'
-import { sortFeaturedFirst } from '@/components/listings/helpers'
 import { cn } from '@/lib/utils'
 
 const HERO_IMG = 'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1400&q=70'
@@ -33,24 +32,19 @@ const TESTIMONIALS = [
   { quote: 'Knowing I only pay if the owner accepts me made it easy to apply. The team even negotiated $100 off my rent.', name: 'Daniel O.', role: 'Renter, London' },
 ]
 
+const HOME_QUERY = { sort: 'featured', limit: 6 } as const
+
 export default function HomePage() {
   const nav = useNavigate()
-  const listings = useStore((s) => s.listings)
-  const users = useStore((s) => s.users)
-  const applications = useStore((s) => s.applications)
+  // Featured-first is the API's default order.
+  const { items, total, cities } = useListingQuery(HOME_QUERY)
 
   const [city, setCity] = useState('')
   const [type, setType] = useState('')
   const [max, setMax] = useState('')
 
-  const active = useMemo(() => listings.filter((l) => l.status === 'active'), [listings])
-  const featured = useMemo(() => [...active].sort(sortFeaturedFirst).slice(0, 6), [active])
-  const cities = useMemo(() => Array.from(new Set(active.map((l) => l.city))).sort(), [active])
-  const stats = {
-    live: active.length,
-    verified: users.filter((u) => u.role === 'renter' && u.verification === 'verified').length,
-    deals: applications.filter((a) => a.status === 'completed').length,
-  }
+  const featured = items.slice(0, 6)
+  const stats = { live: total, cities: cities.length }
 
   const onSearch = (e: FormEvent) => {
     e.preventDefault()
@@ -212,8 +206,8 @@ export default function HomePage() {
         <div className="container-x">
           <div className="grid gap-4 rounded-2xl bg-ink-900 p-6 text-white shadow-lift sm:grid-cols-3 sm:p-8">
             <StatBlock value={stats.live} label="Live, vetted listings" />
-            <StatBlock value={stats.verified} label="Verified renters" />
-            <StatBlock value={stats.deals} label="Completed deals" />
+            <StatBlock value={stats.cities} label="Cities with verified homes" />
+            <StatBlock value={100} suffix="%" label="Renters verified before owners see them" />
           </div>
 
           <div className="mt-14">
@@ -238,10 +232,10 @@ export default function HomePage() {
   )
 }
 
-function StatBlock({ value, label }: { value: number; label: string }) {
+function StatBlock({ value, label, suffix }: { value: number; label: string; suffix?: string }) {
   return (
     <div className="text-center sm:border-r sm:border-white/10 sm:last:border-0">
-      <p className="font-display text-4xl font-bold text-accent-400">{value.toLocaleString()}</p>
+      <p className="font-display text-4xl font-bold text-accent-400">{value.toLocaleString()}{suffix}</p>
       <p className="mt-1 text-sm text-white/70">{label}</p>
     </div>
   )

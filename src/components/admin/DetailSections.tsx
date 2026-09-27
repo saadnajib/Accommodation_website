@@ -23,7 +23,7 @@ export function ListingSummaryCard({ listing }: { listing: Listing | null }) {
             <span className="text-xs text-ink-400">{type}</span>
           </div>
           <h2 className="mt-2 text-lg font-semibold text-ink-900">{listing.title}</h2>
-          <p className="mt-1 flex items-start gap-1.5 text-sm text-ink-500"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /> {listing.address} · {listing.area}, {listing.city}</p>
+          <p className="mt-1 flex items-start gap-1.5 text-sm text-ink-500"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /> {listing.address ? `${listing.address} · ` : ''}{listing.area}, {listing.city}</p>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
             <span className="font-semibold text-ink-900">{formatMoney(listing.price, listing.currency)}<span className="font-normal text-ink-400">/mo</span></span>
             <span className="text-ink-500">Deposit {formatMoney(listing.deposit, listing.currency)}</span>
@@ -41,7 +41,9 @@ export function ListingSummaryCard({ listing }: { listing: Listing | null }) {
 function ContactLines({ user }: { user: User }) {
   return (
     <div className="space-y-1.5 text-sm">
-      <a href={`mailto:${user.email}`} className="flex items-center gap-2 text-ink-700 hover:text-brand-700"><Mail className="h-4 w-4 text-ink-400" /> <span className="truncate">{user.email}</span></a>
+      {user.email
+        ? <a href={`mailto:${user.email}`} className="flex items-center gap-2 text-ink-700 hover:text-brand-700"><Mail className="h-4 w-4 text-ink-400" /> <span className="truncate">{user.email}</span></a>
+        : <p className="flex items-center gap-2 text-ink-400"><Mail className="h-4 w-4" /> No email available</p>}
       {user.phone
         ? <a href={`tel:${user.phone.replace(/\s/g, '')}`} className="flex items-center gap-2 text-ink-700 hover:text-brand-700"><Phone className="h-4 w-4 text-ink-400" /> {user.phone}</a>
         : <p className="flex items-center gap-2 text-ink-400"><Phone className="h-4 w-4" /> No phone on file</p>}
@@ -51,7 +53,11 @@ function ContactLines({ user }: { user: User }) {
 
 export function PersonCard({ user, role }: { user: User | null; role: 'Renter' | 'Owner' }) {
   const rating = useUserRating(user?.id)
-  const count = useStore((s) => (user ? (role === 'Renter' ? s.applications.filter((a) => a.renterId === user.id).length : s.listings.filter((l) => l.ownerId === user.id).length) : 0))
+  // Counts come from the admin users list (GET /admin/users), loaded by the detail page.
+  const count = useStore((s) => {
+    const row = user ? s.adminUsers?.find((u) => u.id === user.id) : undefined
+    return role === 'Renter' ? row?.applicationsCount : row?.listingsCount
+  })
   if (!user) return <Card className="p-5 text-sm text-ink-500">{role} account not found.</Card>
   return (
     <Card>
@@ -71,7 +77,7 @@ export function PersonCard({ user, role }: { user: User | null; role: 'Renter' |
         <dl className="grid grid-cols-2 gap-3 border-t border-ink-100 pt-3">
           <InfoRow label="Rating">{rating.count ? <Rating value={rating.avg} count={rating.count} /> : <span className="text-ink-400">No reviews</span>}</InfoRow>
           <InfoRow label="Member since">{formatDate(user.createdAt, { month: 'short', year: 'numeric' })}</InfoRow>
-          <InfoRow label={role === 'Renter' ? 'Applications' : 'Listings'}>{count}</InfoRow>
+          <InfoRow label={role === 'Renter' ? 'Applications' : 'Listings'}>{count ?? '—'}</InfoRow>
         </dl>
         {user.bio && <p className="text-sm text-ink-500">“{user.bio}”</p>}
       </CardBody>
@@ -91,22 +97,26 @@ export function VerificationCard({ app }: { app: Application }) {
           <>
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <InfoRow label="ID type">{ID_TYPE_LABEL[v.idType]}</InfoRow>
-              <InfoRow label="ID number"><span className="font-mono tracking-wider">{v.idNumberMasked}</span></InfoRow>
+              <InfoRow label="ID number"><span className="font-mono tracking-wider">{v.idNumberMasked ?? '—'}</span></InfoRow>
               <InfoRow label="Agreement">{app.agreementAccepted ? `Accepted ${app.agreementAcceptedAt ? formatDate(app.agreementAcceptedAt) : ''}` : 'Not accepted'}</InfoRow>
             </dl>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <FilePill name={v.idDocumentName} label="ID document" />
-              <FilePill name={v.selfieName} label="Selfie" />
-              {v.proofOfIncomeName
-                ? <FilePill name={v.proofOfIncomeName} label="Proof of income" />
+              {v.idDocumentFileId ? <FilePill fileId={v.idDocumentFileId} label="ID document" /> : <MissingFile label="ID document" />}
+              {v.selfieFileId ? <FilePill fileId={v.selfieFileId} label="Selfie" image /> : <MissingFile label="Selfie" />}
+              {v.proofOfIncomeFileId
+                ? <FilePill fileId={v.proofOfIncomeFileId} label="Proof of income" />
                 : <div className="flex items-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-3 text-sm text-amber-800"><TriangleAlert className="h-4 w-4 shrink-0" /> No proof of income</div>}
             </div>
-            <p className="mt-3 text-xs text-ink-400">Documents are demo placeholders — file names only.</p>
+            <p className="mt-3 text-xs text-ink-400">Documents open in a new tab and are only accessible to the StayBridge team.</p>
           </>
         )}
       </CardBody>
     </Card>
   )
+}
+
+function MissingFile({ label }: { label: string }) {
+  return <div className="flex items-center gap-2 rounded-xl border border-dashed border-ink-300 p-3 text-sm text-ink-500"><TriangleAlert className="h-4 w-4 shrink-0" /> {label} missing</div>
 }
 
 export function ProfileCard({ app, currency }: { app: Application; currency: string }) {
@@ -163,8 +173,10 @@ export function MessageCard({ app }: { app: Application }) {
 export function NotesCard({ app }: { app: Application }) {
   const setAdminNotes = useStore((s) => s.setAdminNotes)
   const toast = useStore((s) => s.toast)
-  const [value, setValue] = useState(app.adminNotes)
-  const dirty = value !== app.adminNotes
+  const saved = app.adminNotes ?? ''
+  const [value, setValue] = useState(saved)
+  const [saving, setSaving] = useState(false)
+  const dirty = value !== saved
   return (
     <Card>
       <CardHeader title="Internal notes" description="Only visible to the StayBridge team. Saved when you leave the field." />
@@ -172,11 +184,14 @@ export function NotesCard({ app }: { app: Application }) {
         <Textarea id="admin-notes" aria-label="Internal notes" rows={4} value={value} placeholder="Calls, owner preferences, negotiation notes…"
           onChange={(e) => setValue(e.target.value)}
           onBlur={() => {
-            if (!dirty) return
+            if (!dirty || saving) return
+            setSaving(true)
             setAdminNotes(app.id, value)
-            toast({ title: 'Notes saved', tone: 'success' })
+              .then(() => toast({ title: 'Notes saved', tone: 'success' }))
+              .catch(() => {})
+              .finally(() => setSaving(false))
           }} />
-        <p className="mt-1.5 text-xs text-ink-400">{dirty ? 'Unsaved changes' : 'All changes saved'}</p>
+        <p className="mt-1.5 text-xs text-ink-400">{saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'All changes saved'}</p>
       </CardBody>
     </Card>
   )

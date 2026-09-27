@@ -3,7 +3,9 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Clock, ImagePlus, Info, Lock, RotateCcw, Send,
 } from 'lucide-react'
-import { useCurrentUser, useListing, useStore } from '@/store/useStore'
+import { useCurrentUser, useListing, useLoad, useStore } from '@/store/useStore'
+import { isApiError } from '@/lib/api'
+import type { Listing } from '@/types'
 import {
   Badge, Button, Card, CardBody, Input, Label, ListingStatusBadge, PageHeader, Select, Stepper, Textarea, Toggle,
 } from '@/components/ui'
@@ -23,8 +25,18 @@ export default function ListingFormPage() {
   const { id } = useParams<{ id: string }>()
   const me = useCurrentUser()
   const listing = useListing(id)
-  const isEdit = !!id
-  const allowed = !isEdit || (!!listing && listing.ownerId === me?.id)
+  const fetchListing = useStore((s) => s.fetchListing)
+  // Always load the owner's full copy (with the private address) before editing.
+  const { loading } = useLoad(() => (id ? fetchListing(id) : Promise.resolve(undefined)), [id, fetchListing])
+  if (id && loading) {
+    return <div className="flex min-h-[40vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
+  if (id && (!listing || listing.ownerId !== me?.id)) return <Navigate to="/owner/listings" replace />
+  return <ListingForm key={id ?? 'new'} listing={id ? listing ?? undefined : undefined} />
+}
+
+function ListingForm({ listing }: { listing?: Listing }) {
+  const isEdit = !!listing
 
   const [init] = useState(() => {
     if (isEdit) return { form: listing ? formFromListing(listing) : emptyForm(), step: 0, restored: false }
@@ -36,15 +48,16 @@ export default function ListingFormPage() {
   const [step, setStep] = useState(init.step)
   const [restored, setRestored] = useState(init.restored)
   const [touched, setTouched] = useState<Set<string>>(() => new Set())
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<'draft' | 'submit' | null>(null)
 
   const createListing = useStore((s) => s.createListing)
   const updateListing = useStore((s) => s.updateListing)
-  const notify = useStore((s) => s.notify)
   const toast = useStore((s) => s.toast)
   const fees = useStore((s) => s.fees)
   const nav = useNavigate()
 
-  const errors = useMemo(() => validate(form), [form])
+  const errors = useMemo(() => ({ ...validate(form), ...serverErrors }), [form, serverErrors])
   const canNext = stepValid(step, errors)
 
   // Persist new-listing drafts for this browser session.
@@ -56,9 +69,13 @@ export default function ListingFormPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [step])
 
-  if (!allowed) return <Navigate to="/owner/listings" replace />
-
-  const set = <K extends keyof ListingFormState>(key: K, value: ListingFormState[K]) => setForm((f) => ({ ...f, [key]: value }))
+  const clearServer = (key: string) => setServerErrors((e) => {
+    if (!(key in e)) return e
+    const next = { ...e }
+    delete next[key]
+    return next
+  })
+  const set = <K extends keyof ListingFormState>(key: K, value: ListingFormState[K]) => { setForm((f) => ({ ...f, [key]: value })); clearServer(key) }
   const touch = (key: string) => setTouched((t) => (t.has(key) ? t : new Set(t).add(key)))
   const err = (key: string) => (touched.has(key) ? errors[key] : undefined)
 
@@ -69,7 +86,7 @@ export default function ListingFormPage() {
   const toggleIn = (key: 'amenities' | 'houseRules', value: string) =>
     setForm((f) => ({ ...f, [key]: f[key].includes(value) ? f[key].filter((x) => x !== value) : [...f[key], value] }))
 
-  const setImages = (fn: (prev: string[]) => string[]) => setForm((f) => ({ ...f, images: fn(f.images) }))
+  const setImages = (fn: (prev: string[]) => string[]) => { setForm((f) => ({ ...f, images: fn(f.images) })); clearServer('images') }
   const addSamples = () => {
     setForm((f) => {
       const fresh = SAMPLE_PHOTOS.filter((p) => !f.images.includes(p)).slice(0, 3)
@@ -96,34 +113,50 @@ export default function ListingFormPage() {
   const liveStatuses = ['active', 'paused', 'rented']
   const keepsStatus = isEdit && !!listing && liveStatuses.includes(listing.status)
 
-  const save = (mode: 'draft' | 'submit') => {
-    if (mode === 'submit' && Object.keys(errors).length) {
-      setStep(firstInvalidStep(errors))
+  const save = async (mode: 'draft' | 'submit') => {
+    if (saving) return
+    const localErrors = validate(form)
+    if (mode === 'submit' && Object.keys(localErrors).length) {
+      setStep(firstInvalidStep(localErrors))
       toast({ title: 'Some details are missing', body: 'Please complete the highlighted fields.', tone: 'error' })
       return
     }
     const data = toListingInput(form)
-    if (!isEdit) {
-      const created = createListing({ ...data, status: mode === 'draft' ? 'draft' : 'pending_review' })
-      clearDraft()
-      toast(mode === 'draft'
-        ? { title: 'Draft saved', body: `“${created.title}” is saved. Submit it for review whenever you're ready.`, tone: 'success' }
-        : { title: 'Submitted for review', body: 'Our team usually reviews new listings within 24 hours.', tone: 'success' })
-    } else if (listing) {
-      if (keepsStatus) {
-        updateListing(listing.id, data)
-        toast({ title: 'Changes saved', body: 'Your listing has been updated.', tone: 'success' })
-      } else if (mode === 'draft') {
-        updateListing(listing.id, { ...data, status: 'draft' })
-        toast({ title: 'Draft saved', tone: 'success' })
+    setSaving(mode)
+    try {
+      if (!listing) {
+        const created = await createListing({ ...data, status: mode === 'draft' ? 'draft' : 'pending_review' })
+        clearDraft()
+        toast(mode === 'draft'
+          ? { title: 'Draft saved', body: `“${created.title}” is saved. Submit it for review whenever you're ready.`, tone: 'success' }
+          : { title: 'Submitted for review', body: 'Our team usually reviews new listings within 24 hours.', tone: 'success' })
+      } else if (keepsStatus || mode === 'draft' || listing.status === 'pending_review') {
+        // Owners can't move a listing back to draft; saving keeps its current status.
+        await updateListing(listing.id, data)
+        toast({ title: 'Changes saved', body: keepsStatus ? 'Your listing has been updated.' : undefined, tone: 'success' })
       } else {
-        const wasPending = listing.status === 'pending_review'
-        updateListing(listing.id, { ...data, status: 'pending_review', rejectionReason: undefined })
-        if (!wasPending) notify('u_admin', 'Listing pending review', `"${data.title}" was submitted for review.`, '/admin/listings')
-        toast({ title: wasPending ? 'Changes saved' : 'Submitted for review', body: 'Our team usually reviews listings within 24 hours.', tone: 'success' })
+        // draft / rejected → pending_review
+        await updateListing(listing.id, { ...data, status: 'pending_review' })
+        toast({ title: 'Submitted for review', body: 'Our team usually reviews listings within 24 hours.', tone: 'success' })
       }
+      nav('/owner/listings')
+    } catch (e) {
+      if (isApiError(e)) {
+        const fe = e.fieldErrors
+        if (Object.keys(fe).length) {
+          // "images" issues carry the offending URL as message; show a friendly line instead.
+          const mapped = Object.fromEntries(Object.entries(fe).map(([k, v]) => {
+            const key = k.split('.')[0]
+            return [key, key === 'images' ? `${e.message}.` : v]
+          }))
+          setServerErrors(mapped)
+          setTouched((t) => new Set([...t, ...Object.keys(mapped)]))
+          setStep(firstInvalidStep(mapped))
+        }
+      }
+    } finally {
+      setSaving(null)
     }
-    nav('/owner/listings')
   }
 
   const price = Number(form.price) || 0
@@ -375,13 +408,13 @@ export default function ListingFormPage() {
               {!canNext && <span className="text-center text-xs text-ink-400 sm:text-right">Complete the required fields to continue</span>}
             </div>
           ) : keepsStatus ? (
-            <Button onClick={() => save('submit')} disabled={Object.keys(errors).length > 0}>
+            <Button onClick={() => void save('submit')} disabled={Object.keys(errors).length > 0} loading={saving === 'submit'}>
               <Check className="h-4 w-4" /> Save changes
             </Button>
           ) : (
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Button variant="outline" onClick={() => save('draft')}>Save as draft</Button>
-              <Button onClick={() => save('submit')} disabled={Object.keys(errors).length > 0}>
+              <Button variant="outline" onClick={() => void save('draft')} loading={saving === 'draft'} disabled={!!saving}>{listing && listing.status !== 'draft' ? 'Save changes' : 'Save as draft'}</Button>
+              <Button onClick={() => void save('submit')} disabled={Object.keys(errors).length > 0 || !!saving} loading={saving === 'submit'}>
                 <Send className="h-4 w-4" /> {listing?.status === 'pending_review' ? 'Save changes' : 'Submit for review'}
               </Button>
             </div>

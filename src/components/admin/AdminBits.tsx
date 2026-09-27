@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import { BadgeCheck, FileImage, FileText, Zap } from 'lucide-react'
+import { BadgeCheck, ExternalLink, FileImage, FileText, Zap } from 'lucide-react'
 import { ApplicationStatusBadge, Badge } from '@/components/ui'
 import { APPLICATION_STATUS } from '@/lib/status'
 import { cn, formatDate, timeAgo } from '@/lib/utils'
+import { fileUrl } from '@/lib/api'
 import type { TimelineEvent } from '@/types'
 import { affordability, BY_LABEL } from './helpers'
 
@@ -31,21 +32,23 @@ export function AffordabilityBadge({ income, rent, showVerdict }: { income?: num
   )
 }
 
-/** Fake attachment chip for uploaded (mock) documents. */
-export function FilePill({ name, label }: { name: string; label: string }) {
-  const isImage = /\.(png|jpe?g|webp|heic|gif)$/i.test(name)
-  const Icon = isImage ? FileImage : FileText
-  const ext = name.split('.').pop()?.toUpperCase() ?? 'FILE'
+/**
+ * Chip linking to a private uploaded document (GET /api/files/:id). Opens in a new tab; the admin's
+ * session cookie authorises the request.
+ */
+export function FilePill({ fileId, label, image }: { fileId: string; label: string; image?: boolean }) {
+  const Icon = image ? FileImage : FileText
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-ink-200 bg-ink-50/60 p-3 transition-colors hover:border-brand-300 hover:bg-brand-50/40">
-      <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', isImage ? 'bg-sky-50 text-sky-600' : 'bg-red-50 text-red-600')}>
+    <a href={fileUrl(fileId)} target="_blank" rel="noopener noreferrer"
+      className="flex min-w-0 items-center gap-3 rounded-xl border border-ink-200 bg-ink-50/60 p-3 transition-colors hover:border-brand-300 hover:bg-brand-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+      <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', image ? 'bg-sky-50 text-sky-600' : 'bg-red-50 text-red-600')}>
         <Icon className="h-5 w-5" />
       </span>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-ink-900" title={name}>{name}</p>
-        <p className="text-xs text-ink-400">{label} · {ext}</p>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-ink-900">{label}</p>
+        <p className="flex items-center gap-1 text-xs text-brand-700">Open in new tab <ExternalLink className="h-3 w-3" /></p>
       </div>
-    </div>
+    </a>
   )
 }
 

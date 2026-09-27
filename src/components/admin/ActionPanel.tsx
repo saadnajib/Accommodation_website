@@ -3,14 +3,18 @@ import { CircleCheck, Clock, LockOpen, MessageSquare } from 'lucide-react'
 import { ApplicationStatusBadge, Button, Card, CardBody } from '@/components/ui'
 import { APPLICATION_STATUS, PIPELINE, pipelineIndex } from '@/lib/status'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
-import type { Application } from '@/types'
+import type { Application, ApplicationStatus, TimelineEvent } from '@/types'
 import { actionsFor, CANCEL_ACTION, canCancel, type ActionSpec } from './actions'
 import { ADMIN_NEXT_STEP, isClosed, statusEnteredAt } from './helpers'
 
-export function ActionPanel({ app, currency, onAction, onMarkFee }: {
-  app: Application; currency: string; onAction: (spec: ActionSpec) => void; onMarkFee: (side: 'renter' | 'owner') => void
+export function ActionPanel({ app, events, allowed, currency, onAction, onMarkFee }: {
+  app: Application; events?: TimelineEvent[]
+  /** allowedTransitions from GET /applications/:id — the server's state machine is authoritative. */
+  allowed?: ApplicationStatus[]
+  currency: string; onAction: (spec: ActionSpec) => void; onMarkFee: (side: 'renter' | 'owner') => void
 }) {
-  const actions = actionsFor(app.status)
+  const permitted = (to: ApplicationStatus) => (allowed ? allowed.includes(to) : true)
+  const actions = actionsFor(app.status).filter((a) => permitted(a.to))
   const idx = pipelineIndex(app.status)
   const progress = idx >= 0 ? ((idx + 1) / PIPELINE.length) * 100 : 100
 
@@ -23,7 +27,7 @@ export function ActionPanel({ app, currency, onAction, onMarkFee }: {
         <div>
           <div className="flex items-center justify-between gap-2">
             <ApplicationStatusBadge status={app.status} />
-            <span className="inline-flex items-center gap-1 text-xs text-ink-400"><Clock className="h-3.5 w-3.5" /> {timeAgo(statusEnteredAt(app))}</span>
+            <span className="inline-flex items-center gap-1 text-xs text-ink-400"><Clock className="h-3.5 w-3.5" /> {timeAgo(statusEnteredAt(app, events))}</span>
           </div>
           <p className="mt-2 text-sm text-ink-500">{APPLICATION_STATUS[app.status].description}</p>
           <p className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-sm font-medium text-brand-900">{ADMIN_NEXT_STEP[app.status]}</p>
@@ -31,8 +35,8 @@ export function ActionPanel({ app, currency, onAction, onMarkFee }: {
 
         {app.status === 'awaiting_fees' && (
           <div className="space-y-2">
-            <FeeStatus label="Renter fee" amount={formatMoney(app.renterFee, currency)} paid={app.renterFeePaid} onMark={() => onMarkFee('renter')} />
-            <FeeStatus label="Owner fee" amount={formatMoney(app.ownerFee, currency)} paid={app.ownerFeePaid} onMark={() => onMarkFee('owner')} />
+            <FeeStatus label="Renter fee" amount={formatMoney(app.renterFee ?? 0, currency)} paid={app.renterFeePaid} onMark={() => onMarkFee('renter')} />
+            <FeeStatus label="Owner fee" amount={formatMoney(app.ownerFee ?? 0, currency)} paid={app.ownerFeePaid} onMark={() => onMarkFee('owner')} />
           </div>
         )}
 
@@ -53,7 +57,7 @@ export function ActionPanel({ app, currency, onAction, onMarkFee }: {
           </div>
         )}
 
-        {canCancel(app.status) && (
+        {canCancel(app.status) && permitted('cancelled') && (
           <Button full variant="ghost" className="text-red-700 hover:bg-red-50" onClick={() => onAction(CANCEL_ACTION)}>{CANCEL_ACTION.label}</Button>
         )}
       </CardBody>

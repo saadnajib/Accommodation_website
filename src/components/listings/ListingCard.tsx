@@ -7,19 +7,24 @@ import { bedsLabel, typeLabel } from './helpers'
 
 export function ListingCard({ listing }: { listing: Listing }) {
   const saved = useIsSaved(listing.id)
-  const loggedIn = useStore((s) => !!s.currentUserId)
+  const role = useStore((s) => s.me?.role)
   const toggleSaved = useStore((s) => s.toggleSaved)
   const toast = useStore((s) => s.toast)
   const nav = useNavigate()
   const loc = useLocation()
 
   const onSave = () => {
-    if (!loggedIn) {
+    if (!role) {
       nav('/login', { state: { from: loc.pathname + loc.search } })
       return
     }
+    if (role !== 'renter') {
+      toast({ title: 'Saving homes is for renter accounts', tone: 'info' })
+      return
+    }
     toggleSaved(listing.id)
-    toast({ title: saved ? 'Removed from saved homes' : 'Saved to your homes', tone: saved ? 'info' : 'success' })
+      .then(() => toast({ title: saved ? 'Removed from saved homes' : 'Saved to your homes', tone: saved ? 'info' : 'success' }))
+      .catch(() => {})
   }
 
   const available = new Date(listing.availableFrom) <= new Date() ? 'Available now' : `From ${formatDate(listing.availableFrom, { day: 'numeric', month: 'short' })}`

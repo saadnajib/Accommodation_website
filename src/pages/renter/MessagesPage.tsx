@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Eye, FileText, Info, Lock, MessageSquare, Phone, SendHorizontal } from 'lucide-react'
-import type { Application, Listing, Message, User } from '@/types'
+import type { ApplicationStatus, Message, User } from '@/types'
 import { Avatar, Button, EmptyState, PageHeader } from '@/components/ui'
-import { useCurrentUser, useStore } from '@/store/useStore'
+import { useApplicationEvents, useCurrentUser, useListing, useLoad, useMessages, useStore, useUser } from '@/store/useStore'
 import { cn, formatDate, timeAgo } from '@/lib/utils'
 import { formatTime } from '@/components/shared/applicationUtils'
 
 interface Conversation {
-  app: Application
-  listing?: Listing
+  app: { id: string; status: ApplicationStatus }
+  listing?: { id: string; title: string }
+  /** For admins: both sides (the API sends the renter as `counterpart` plus `owner`). */
   renter?: User
   owner?: User
   /** The other party from the viewer's point of view (undefined for admin). */
   counterpart?: User
   last?: Message
-  lastAt: string
-  unlockedAt: string
+  lastAt?: string
+  unread: number
 }
 
 function applicationLink(role: User['role'], id: string) {
@@ -38,35 +39,33 @@ function dayLabel(iso: string) {
 export default function MessagesPage() {
   const { applicationId } = useParams()
   const user = useCurrentUser()
-  const applications = useStore((s) => s.applications)
-  const messages = useStore((s) => s.messages)
-  const users = useStore((s) => s.users)
-  const listings = useStore((s) => s.listings)
+  const raw = useStore((s) => s.conversations)
+  const fetchConversations = useStore((s) => s.fetchConversations)
+  const { loading } = useLoad(() => fetchConversations(), [fetchConversations])
   const nav = useNavigate()
   const [picked, setPicked] = useState<string | null>(null)
   const [mobileView, setMobileView] = useState<'list' | 'thread'>(applicationId ? 'thread' : 'list')
 
+  // GET /me/conversations is already sorted by latest activity.
   const conversations = useMemo<Conversation[]>(() => {
-    if (!user) return []
+    if (!user || !raw) return []
     const isAdmin = user.role === 'admin'
-    return applications
-      .filter((a) => a.contactUnlocked && (isAdmin || a.renterId === user.id || a.ownerId === user.id))
-      .map((a) => {
-        const thread = messages.filter((m) => m.applicationId === a.id)
-        const last = thread.reduce<Message | undefined>((acc, m) => (!acc || m.at > acc.at ? m : acc), undefined)
-        const renter = users.find((u) => u.id === a.renterId)
-        const owner = users.find((u) => u.id === a.ownerId)
-        const unlockedAt = [...a.timeline].reverse().find((e) => e.status === 'contact_unlocked')?.at ?? a.createdAt
-        return {
-          app: a, listing: listings.find((l) => l.id === a.listingId), renter, owner,
-          counterpart: isAdmin ? undefined : a.renterId === user.id ? owner : renter,
-          last, lastAt: last?.at ?? unlockedAt, unlockedAt,
-        }
-      })
-      .sort((x, y) => y.lastAt.localeCompare(x.lastAt))
-  }, [applications, messages, users, listings, user])
+    return raw.map((c) => ({
+      app: { id: c.application.id, status: c.application.status },
+      listing: c.application.listing,
+      renter: isAdmin ? c.renter ?? c.counterpart : undefined,
+      owner: isAdmin ? c.owner : undefined,
+      counterpart: isAdmin ? undefined : c.counterpart,
+      last: c.lastMessage ?? undefined,
+      lastAt: c.lastMessage?.at,
+      unread: c.unread ?? 0,
+    }))
+  }, [raw, user])
 
   if (!user) return null
+  if (!raw && loading) {
+    return <div className="flex min-h-[40vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
 
   const paramValid = !!applicationId && conversations.some((c) => c.app.id === applicationId)
   const activeId = paramValid ? applicationId : picked && conversations.some((c) => c.app.id === picked) ? picked : conversations[0]?.app.id
@@ -130,7 +129,10 @@ export default function MessagesPage() {
                       <span className="min-w-0 flex-1">
                         <span className="flex items-baseline justify-between gap-2">
                           <span className={cn('truncate text-sm font-semibold', selected ? 'text-brand-900' : 'text-ink-900')}>{title}</span>
-                          <span className="shrink-0 text-[11px] text-ink-400">{timeAgo(c.lastAt)}</span>
+                          <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-ink-400">
+                            {c.unread > 0 && c.app.id !== activeId && <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white" aria-label={`${c.unread} unread`}>{c.unread}</span>}
+                            {c.lastAt ? timeAgo(c.lastAt) : ''}
+                          </span>
                         </span>
                         <span className="block truncate text-xs font-medium text-ink-500">{c.listing?.title ?? 'Listing'}</span>
                         <span className={cn('block truncate text-xs', c.last ? 'text-ink-400' : 'italic text-brand-700')}>{preview}</span>
@@ -156,38 +158,71 @@ export default function MessagesPage() {
   )
 }
 
+const POLL_MS = 15_000
+
 function Thread({ convo, me, onBack }: { convo: Conversation; me: User; onBack: () => void }) {
-  const all = useStore((s) => s.messages)
+  const appId = convo.app.id
+  const messages = useMessages(appId)
   const sendMessage = useStore((s) => s.sendMessage)
+  const fetchMessages = useStore((s) => s.fetchMessages)
+  const fetchApplication = useStore((s) => s.fetchApplication)
+  const fetchNotifications = useStore((s) => s.fetchNotifications)
+  // The detail gives the unlocked address, when contact unlocked, and both parties' names.
+  const application = useStore((s) => s.applicationsById[appId])
+  const listing = useListing(application?.listingId)
+  const renterUser = useUser(application?.renterId)
+  const ownerUser = useUser(application?.ownerId)
+  const events = useApplicationEvents(appId)
   const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const isAdmin = me.role === 'admin'
-  const thread = useMemo(() => all.filter((m) => m.applicationId === convo.app.id).sort((a, b) => a.at.localeCompare(b.at)), [all, convo.app.id])
+  const thread = useMemo(() => [...messages].sort((a, b) => a.at.localeCompare(b.at)), [messages])
+  const unlockedAt = [...events].reverse().find((e) => e.status === 'contact_unlocked')?.at
+
+  useEffect(() => {
+    // Opening a thread marks its "New message" notifications read server-side; refresh the badge after.
+    void Promise.all([fetchMessages(appId), fetchApplication(appId)]).then(() => fetchNotifications()).catch(() => {})
+    const t = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchMessages(appId).catch(() => {})
+    }, POLL_MS)
+    return () => window.clearInterval(t)
+  }, [appId, fetchMessages, fetchApplication, fetchNotifications])
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [thread.length])
 
-  const send = () => {
-    if (!text.trim()) return
-    sendMessage(convo.app.id, text)
-    setText('')
-    inputRef.current?.focus()
+  const send = async () => {
+    const body = text.trim()
+    if (!body || sending) return
+    if (body.length > 2000) { useStore.getState().toast({ title: 'Message too long', body: 'Keep messages under 2000 characters.', tone: 'error' }); return }
+    setSending(true)
+    try {
+      await sendMessage(appId, body)
+      setText('')
+    } catch { /* toast shown by the store; keep the text so it can be resent */ } finally {
+      setSending(false)
+      inputRef.current?.focus()
+    }
   }
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
-      send()
+      void send()
     }
   }
 
+  const renter = renterUser ?? convo.renter
+  const owner = ownerUser ?? convo.owner
   const other = convo.counterpart
-  const headerName = isAdmin ? `${convo.renter?.name ?? 'Renter'} ↔ ${convo.owner?.name ?? 'Owner'}` : other?.name ?? 'StayBridge member'
-  const nameOf = (id: string) => users(convo).find((u) => u.id === id)?.name ?? 'Member'
+  const headerName = isAdmin ? `${renter?.name ?? 'Renter'} ↔ ${owner?.name ?? 'Owner'}` : other?.name ?? 'StayBridge member'
+  const nameOf = (id: string) => [renter, owner].find((u) => u?.id === id)?.name ?? 'Member'
   // For admins, the owner's messages go on the right so the two sides are visually distinct.
-  const isRight = (m: Message) => (isAdmin ? m.fromId === convo.app.ownerId : m.fromId === me.id)
+  const ownerId = application?.ownerId ?? owner?.id
+  const isRight = (m: Message) => (isAdmin ? m.fromId === ownerId : m.fromId === me.id)
 
   return (
     <>
@@ -195,7 +230,7 @@ function Thread({ convo, me, onBack }: { convo: Conversation; me: User; onBack: 
         <button onClick={onBack} className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 md:hidden" aria-label="Back to conversations">
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <Avatar name={isAdmin ? convo.renter?.name ?? '?' : other?.name ?? '?'} src={isAdmin ? convo.renter?.avatarUrl : other?.avatarUrl} size="md" />
+        <Avatar name={isAdmin ? renter?.name ?? '?' : other?.name ?? '?'} src={isAdmin ? renter?.avatarUrl : other?.avatarUrl} size="md" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-ink-900">{headerName}</p>
           {convo.listing ? (
@@ -215,8 +250,8 @@ function Thread({ convo, me, onBack }: { convo: Conversation; me: User; onBack: 
       <div ref={scrollRef} className="flex-1 space-y-1 overflow-y-auto bg-ink-50/60 px-3 py-4 sm:px-5" aria-live="polite">
         <p className="mx-auto mb-4 flex max-w-sm items-start gap-2 rounded-xl bg-white px-3 py-2 text-xs text-ink-500 shadow-sm ring-1 ring-ink-100">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-600" />
-          Contact unlocked {formatDate(convo.unlockedAt)}.
-          {convo.listing ? ` Address: ${convo.listing.address}.` : ''} Keep payments for rent and deposit to your signed contract.
+          Contact unlocked{unlockedAt ? ` ${formatDate(unlockedAt)}` : ''}.
+          {listing?.address ? ` Address: ${listing.address}.` : ''} Keep payments for rent and deposit to your signed contract.
         </p>
         {thread.length === 0 && (
           <p className="py-10 text-center text-sm text-ink-400">{isAdmin ? 'No messages exchanged yet.' : 'No messages yet. Say hello and arrange a viewing.'}</p>
@@ -257,21 +292,17 @@ function Thread({ convo, me, onBack }: { convo: Conversation; me: User; onBack: 
           <Lock className="h-4 w-4 shrink-0" /> Read-only — admins can view but not send messages in this conversation.
         </div>
       ) : (
-        <form onSubmit={(e) => { e.preventDefault(); send() }} className="flex items-end gap-2 border-t border-ink-100 p-3">
+        <form onSubmit={(e) => { e.preventDefault(); void send() }} className="flex items-end gap-2 border-t border-ink-100 p-3">
           <label htmlFor="composer" className="sr-only">Message</label>
-          <textarea id="composer" ref={inputRef} rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
+          <textarea id="composer" ref={inputRef} rows={1} value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
             placeholder={`Message ${other?.name.split(' ')[0] ?? ''}…`}
             className="max-h-32 min-h-11 flex-1 resize-none rounded-xl border border-ink-200 bg-white px-3.5 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25" />
-          <Button type="submit" disabled={!text.trim()} aria-label="Send message" className="h-11 w-11 shrink-0 px-0!">
-            <SendHorizontal className="h-4 w-4" />
+          <Button type="submit" disabled={!text.trim()} loading={sending} aria-label="Send message" className="h-11 w-11 shrink-0 px-0!">
+            {!sending && <SendHorizontal className="h-4 w-4" />}
           </Button>
         </form>
       )}
       {!isAdmin && <p className="hidden px-4 pb-2 text-[11px] text-ink-400 sm:block">Enter to send · Shift + Enter for a new line</p>}
     </>
   )
-}
-
-function users(c: Conversation) {
-  return [c.renter, c.owner].filter((u): u is User => !!u)
 }

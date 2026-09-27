@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft, Bath, BedDouble, CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Eye, Heart, Home, Info, Lock, MapPin,
   Maximize2, Receipt, Ruler, Share2, ShieldCheck, Sofa, Sparkles, Wallet,
 } from 'lucide-react'
-import { useCurrentUser, useIsSaved, useListing, useStore, useUser, useUserRating } from '@/store/useStore'
+import { useCurrentUser, useIsSaved, useListing, useLoad, useStore, useUser, useUserRating } from '@/store/useStore'
+import { useShallow } from 'zustand/react/shallow'
+import type { Listing } from '@/types'
 import { computeFees } from '@/lib/fees'
 import { Avatar, Badge, Button, Card, EmptyState, ListingStatusBadge, Modal, Rating, VerificationBadge } from '@/components/ui'
 import { ListingCard } from '@/components/listings/ListingCard'
@@ -18,10 +20,12 @@ export default function ListingDetailPage() {
   const owner = useUser(listing?.ownerId)
   const rating = useUserRating(listing?.ownerId)
   const saved = useIsSaved(id ?? '')
-  const allListings = useStore((s) => s.listings)
   const fees = useStore((s) => s.fees)
-  const incrementViews = useStore((s) => s.incrementViews)
+  const fetchListing = useStore((s) => s.fetchListing)
   const toggleSaved = useStore((s) => s.toggleSaved)
+  // The API counts a view once per session on GET.
+  const { loading } = useLoad(() => (id ? fetchListing(id) : Promise.resolve(null)), [id, fetchListing])
+  const similar = useStore(useShallow((s) => (id ? s.similarByListing[id] ?? [] : []).map((x) => s.listingsById[x]).filter((l): l is Listing => !!l).slice(0, 3)))
   const toast = useStore((s) => s.toast)
   const nav = useNavigate()
   const loc = useLocation()
@@ -29,26 +33,16 @@ export default function ListingDetailPage() {
   const [imgIdx, setImgIdx] = useState(0)
   const [lightbox, setLightbox] = useState(false)
 
-  const viewed = useRef<string | null>(null)
-  const exists = !!listing
-  useEffect(() => {
-    if (!id || !exists || viewed.current === id) return
-    viewed.current = id
-    incrementViews(id)
-  }, [id, exists, incrementViews])
-
   // Reset gallery when navigating between listings.
   const [lastId, setLastId] = useState(id)
   if (lastId !== id) { setLastId(id); setImgIdx(0) }
 
-  const similar = useMemo(() => {
-    if (!listing) return []
-    return allListings.filter((l) => l.status === 'active' && l.city === listing.city && l.id !== listing.id).slice(0, 3)
-  }, [allListings, listing])
 
-  const isOwnerOrAdmin = !!user && !!listing && (user.role === 'admin' || user.id === listing.ownerId)
+  if (!listing && loading) {
+    return <div className="container-x flex min-h-[60vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
 
-  if (!listing || (listing.status !== 'active' && !isOwnerOrAdmin)) {
+  if (!listing) {
     return (
       <div className="container-x py-16">
         <EmptyState
@@ -73,8 +67,10 @@ export default function ListingDetailPage() {
   }
   const onSave = () => {
     if (!user) { nav('/login', { state: { from: loc.pathname } }); return }
+    if (user.role !== 'renter') { toast({ title: 'Saving homes is for renter accounts', tone: 'info' }); return }
     toggleSaved(listing.id)
-    toast({ title: saved ? 'Removed from saved homes' : 'Saved to your homes', tone: saved ? 'info' : 'success' })
+      .then(() => toast({ title: saved ? 'Removed from saved homes' : 'Saved to your homes', tone: saved ? 'info' : 'success' }))
+      .catch(() => {})
   }
   const onShare = async () => {
     const url = window.location.href

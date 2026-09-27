@@ -27,12 +27,21 @@ const publicLinks = [
 export function Navbar() {
   const user = useCurrentUser()
   const logout = useStore((s) => s.logout)
+  const fetchNotifications = useStore((s) => s.fetchNotifications)
   const unread = useUnreadCount()
   const [open, setOpen] = useState(false)
   const [menu, setMenu] = useState(false)
   const [notif, setNotif] = useState(false)
   const nav = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
+
+  // Keep the unread badge fresh while signed in.
+  const signedIn = !!user
+  useEffect(() => {
+    if (!signedIn) return
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') void fetchNotifications().catch(() => {}) }, 60_000)
+    return () => window.clearInterval(t)
+  }, [signedIn, fetchNotifications])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) { setMenu(false); setNotif(false) } }
@@ -74,7 +83,7 @@ export function Navbar() {
                       <p className="truncate text-xs capitalize text-ink-400">{user.role} account</p>
                     </div>
                     <Link to={dashboardPath(user.role)} onClick={() => setMenu(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-ink-50"><LayoutDashboard className="h-4 w-4 text-ink-400" /> Dashboard</Link>
-                    <button onClick={() => { logout(); setMenu(false); nav('/') }} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"><LogOut className="h-4 w-4" /> Sign out</button>
+                    <button onClick={() => { setMenu(false); void logout().then(() => nav('/')) }} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"><LogOut className="h-4 w-4" /> Sign out</button>
                   </div>
                 )}
               </div>
@@ -108,22 +117,24 @@ export function Navbar() {
 }
 
 function NotificationsPanel({ onClose }: { onClose: () => void }) {
-  const user = useCurrentUser()
   const all = useStore((s) => s.notifications)
   const markRead = useStore((s) => s.markNotificationRead)
   const markAll = useStore((s) => s.markAllNotificationsRead)
+  const fetchNotifications = useStore((s) => s.fetchNotifications)
   const nav = useNavigate()
-  const items = all.filter((n) => n.userId === user?.id).slice(0, 8)
+  // Refresh whenever the panel opens.
+  useEffect(() => { void fetchNotifications().catch(() => {}) }, [fetchNotifications])
+  const items = all.slice(0, 8)
   return (
     <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-ink-200 bg-white shadow-lift animate-fade-up">
       <div className="flex items-center justify-between border-b border-ink-100 px-4 py-3">
         <p className="text-sm font-semibold">Notifications</p>
-        <button onClick={markAll} className="text-xs font-medium text-brand-700 hover:underline">Mark all read</button>
+        <button onClick={() => void markAll().catch(() => {})} className="text-xs font-medium text-brand-700 hover:underline">Mark all read</button>
       </div>
       <div className="max-h-80 overflow-y-auto">
         {items.length === 0 && <p className="px-4 py-8 text-center text-sm text-ink-400">No notifications yet.</p>}
         {items.map((n) => (
-          <button key={n.id} onClick={() => { markRead(n.id); onClose(); if (n.link) nav(n.link) }} className={cn('flex w-full gap-3 border-b border-ink-50 px-4 py-3 text-left hover:bg-ink-50', !n.read && 'bg-brand-50/50')}>
+          <button key={n.id} onClick={() => { void markRead(n.id); onClose(); if (n.link) nav(n.link) }} className={cn('flex w-full gap-3 border-b border-ink-50 px-4 py-3 text-left hover:bg-ink-50', !n.read && 'bg-brand-50/50')}>
             <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-brand-600')} />
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium text-ink-900">{n.title}</span>

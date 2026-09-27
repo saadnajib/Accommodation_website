@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Check, ChevronDown, Eye, ExternalLink, Pause, Play, Search, Sparkles, Store, X } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, ListingStatusBadge, PageHeader, Tabs } from '@/components/ui'
-import { useStore } from '@/store/useStore'
+import { coverImage, useAdminListings, useLoad, useStore } from '@/store/useStore'
 import { PROPERTY_TYPES } from '@/lib/status'
 import { cn, formatDate, formatMoney, timeAgo } from '@/lib/utils'
 import type { Listing, ListingStatus } from '@/types'
@@ -19,35 +19,39 @@ const TABS: Array<{ value: ListingStatus; label: string }> = [
 ]
 
 export default function AdminListingsPage() {
-  const listings = useStore((s) => s.listings)
-  const users = useStore((s) => s.users)
+  const listings = useAdminListings()
+  const usersById = useStore((s) => s.usersById)
   const setListingStatus = useStore((s) => s.setListingStatus)
-  const updateListing = useStore((s) => s.updateListing)
+  const setListingFeatured = useStore((s) => s.setListingFeatured)
+  const fetchAdminListings = useStore((s) => s.fetchAdminListings)
   const toast = useStore((s) => s.toast)
   const [params, setParams] = useSearchParams()
   const ownerFilter = params.get('owner')
-  const [tab, setTab] = useState<ListingStatus>(() => {
+  // All statuses at once (tab counts); the owner filter is applied server-side, search client-side.
+  const { loading } = useLoad(() => fetchAdminListings(ownerFilter ? { owner: ownerFilter } : undefined), [ownerFilter, fetchAdminListings])
+  const [pickedTab, setTab] = useState<ListingStatus | null>(() => {
     const t = params.get('tab') as ListingStatus | null
-    if (t && TABS.some((x) => x.value === t)) return t
-    // Filtering by owner: open the first tab that has something for them.
-    if (ownerFilter) return TABS.find((x) => listings.some((l) => l.ownerId === ownerFilter && l.status === x.value))?.value ?? 'pending_review'
-    return 'pending_review'
+    return t && TABS.some((x) => x.value === t) ? t : null
   })
+  // Filtering by owner: open the first tab that has something for them.
+  const tab: ListingStatus = pickedTab ?? (ownerFilter ? TABS.find((x) => listings.some((l) => l.status === x.value))?.value : undefined) ?? 'pending_review'
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [rejecting, setRejecting] = useState<Listing | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
 
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
-  const owner = ownerFilter ? userById.get(ownerFilter) : undefined
+  const userById = useMemo(() => ({ get: (id: string) => usersById[id] }), [usersById])
+  const ownerNameOf = (l: Listing) => usersById[l.ownerId]?.name ?? l.ownerName
+  const owner = ownerFilter ? { name: usersById[ownerFilter]?.name ?? listings.find((l) => l.ownerId === ownerFilter)?.ownerName ?? 'Selected owner' } : undefined
 
   const scoped = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return listings.filter((l) => {
       if (ownerFilter && l.ownerId !== ownerFilter) return false
       if (!needle) return true
-      return [l.title, l.city, l.area, userById.get(l.ownerId)?.name ?? ''].some((s) => s.toLowerCase().includes(needle))
+      return [l.title, l.city, l.area, usersById[l.ownerId]?.name ?? l.ownerName ?? ''].some((s) => s.toLowerCase().includes(needle))
     })
-  }, [listings, ownerFilter, q, userById])
+  }, [listings, ownerFilter, q, usersById])
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
@@ -58,18 +62,23 @@ export default function AdminListingsPage() {
   const rows = scoped.filter((l) => l.status === tab).sort((a, b) =>
     tab === 'pending_review' ? a.createdAt.localeCompare(b.createdAt) : b.createdAt.localeCompare(a.createdAt))
 
-  const approve = (l: Listing) => {
-    setListingStatus(l.id, 'active')
-    toast({ title: 'Listing approved', body: `“${l.title}” is now live.`, tone: 'success' })
+  const busy = async (l: Listing, fn: () => Promise<unknown>) => {
+    if (busyId) return
+    setBusyId(l.id)
+    try { await fn() } catch { /* toast shown by the store */ } finally { setBusyId(null) }
   }
-  const pause = (l: Listing) => {
-    setListingStatus(l.id, 'paused')
+  const approve = (l: Listing) => busy(l, async () => {
+    await setListingStatus(l.id, 'active')
+    toast({ title: l.status === 'paused' ? 'Listing reactivated' : 'Listing approved', body: `“${l.title}” is now live.`, tone: 'success' })
+  })
+  const pause = (l: Listing) => busy(l, async () => {
+    await setListingStatus(l.id, 'paused')
     toast({ title: 'Listing paused', body: 'It is hidden from search until reactivated.', tone: 'info' })
-  }
-  const toggleFeatured = (l: Listing) => {
-    updateListing(l.id, { featured: !l.featured })
+  })
+  const toggleFeatured = (l: Listing) => busy(l, async () => {
+    await setListingFeatured(l.id, !l.featured)
     toast({ title: l.featured ? 'Featured boost removed' : 'Listing featured (complimentary)', tone: 'success' })
-  }
+  })
 
   return (
     <div>
@@ -89,10 +98,12 @@ export default function AdminListingsPage() {
         )}
       </div>
 
-      <Tabs<ListingStatus> className="mb-5" value={tab} onChange={setTab}
+      <Tabs<ListingStatus> className="mb-5" value={tab} onChange={(t) => setTab(t)}
         tabs={TABS.map((t) => ({ ...t, count: counts[t.value] ?? 0 }))} />
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && loading ? (
+        <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-28 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+      ) : rows.length === 0 ? (
         <EmptyState icon={<Store className="h-6 w-6" />} title={`No ${TABS.find((t) => t.value === tab)?.label.toLowerCase()} listings`}
           description={tab === 'pending_review' ? 'New listings from owners will appear here for moderation.' : undefined} />
       ) : (
@@ -106,7 +117,7 @@ export default function AdminListingsPage() {
                 <Card className={cn('overflow-hidden transition-shadow', expanded && 'shadow-lift')}>
                   <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
                     <div className="flex min-w-0 flex-1 gap-4">
-                      <img src={l.images[0]} alt={l.title} loading="lazy" className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-ink-100 object-cover text-[0px] sm:h-20 sm:w-28" />
+                      <img src={coverImage(l)} alt={l.title} loading="lazy" className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-ink-100 object-cover text-[0px] sm:h-20 sm:w-28" />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <ListingStatusBadge status={l.status} />
@@ -114,7 +125,7 @@ export default function AdminListingsPage() {
                         </div>
                         <p className="mt-1 truncate font-semibold text-ink-900" title={l.title}>{l.title}</p>
                         <p className="truncate text-sm text-ink-500">
-                          {ownerUser?.name ?? 'Unknown owner'} · {l.city} · <span className="font-medium text-ink-900">{formatMoney(l.price, l.currency)}</span>/mo
+                          {ownerNameOf(l) ?? 'Unknown owner'} · {l.city} · <span className="font-medium text-ink-900">{formatMoney(l.price, l.currency)}</span>/mo
                         </p>
                         <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-400">
                           <span>Created {timeAgo(l.createdAt)}</span>
@@ -126,17 +137,17 @@ export default function AdminListingsPage() {
 
                     <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       {l.status === 'pending_review' && (<>
-                        <Button size="sm" onClick={() => approve(l)}><Check className="h-4 w-4" /> Approve</Button>
+                        <Button size="sm" onClick={() => void approve(l)} loading={busyId === l.id}><Check className="h-4 w-4" /> Approve</Button>
                         <Button size="sm" variant="ghost" className="text-red-700 hover:bg-red-50" onClick={() => setRejecting(l)}>Reject</Button>
                       </>)}
                       {l.status === 'active' && (<>
-                        <Button size="sm" variant="outline" onClick={() => pause(l)}><Pause className="h-4 w-4" /> Pause</Button>
-                        <Button size="sm" variant={l.featured ? 'outline' : 'accent'} onClick={() => toggleFeatured(l)}>
+                        <Button size="sm" variant="outline" onClick={() => void pause(l)} disabled={busyId === l.id}><Pause className="h-4 w-4" /> Pause</Button>
+                        <Button size="sm" variant={l.featured ? 'outline' : 'accent'} onClick={() => void toggleFeatured(l)} disabled={busyId === l.id}>
                           <Sparkles className="h-4 w-4" /> {l.featured ? 'Unfeature' : 'Feature'}
                         </Button>
                       </>)}
                       {(l.status === 'paused' || l.status === 'rejected') && (
-                        <Button size="sm" variant="outline" onClick={() => approve(l)}><Play className="h-4 w-4" /> {l.status === 'paused' ? 'Reactivate' : 'Approve'}</Button>
+                        <Button size="sm" variant="outline" onClick={() => void approve(l)} loading={busyId === l.id}><Play className="h-4 w-4" /> {l.status === 'paused' ? 'Reactivate' : 'Approve'}</Button>
                       )}
                       <Link to={`/listings/${l.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold text-brand-700 hover:bg-brand-50">
                         Preview <ExternalLink className="h-3.5 w-3.5" />
@@ -155,7 +166,7 @@ export default function AdminListingsPage() {
                         <p className="text-xs font-medium uppercase tracking-wide text-ink-400">Description</p>
                         <p className="mt-1 whitespace-pre-line text-sm text-ink-700">{l.description}</p>
                         <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                          <InfoRow label="Exact address" className="col-span-2 sm:col-span-3">{l.address} · {l.area}, {l.city}</InfoRow>
+                          <InfoRow label="Exact address" className="col-span-2 sm:col-span-3">{l.address ? `${l.address} · ` : ''}{l.area}, {l.city}</InfoRow>
                           <InfoRow label="Type">{PROPERTY_TYPES.find((t) => t.value === l.type)?.label ?? l.type}</InfoRow>
                           <InfoRow label="Size">{l.bedrooms} bd · {l.bathrooms} ba · {l.sizeSqm} m²</InfoRow>
                           <InfoRow label="Deposit">{formatMoney(l.deposit, l.currency)}</InfoRow>
@@ -167,7 +178,7 @@ export default function AdminListingsPage() {
                       <div className="space-y-4">
                         <TagList title="Amenities" items={l.amenities} />
                         <TagList title="House rules" items={l.houseRules} />
-                        {ownerUser && (
+                        {ownerUser?.email && (
                           <div>
                             <p className="text-xs font-medium uppercase tracking-wide text-ink-400">Owner contact</p>
                             <p className="mt-1 text-sm text-ink-700">{ownerUser.email}{ownerUser.phone ? <><br />{ownerUser.phone}</> : null}</p>
@@ -194,8 +205,8 @@ export default function AdminListingsPage() {
           noteLabel="Reason shown to the owner"
           noteRequired
           placeholder="e.g. Photos are too dark — please add at least three daylight photos of the room."
-          onConfirm={(reason) => {
-            setListingStatus(rejecting.id, 'rejected', reason)
+          onConfirm={async (reason) => {
+            await setListingStatus(rejecting.id, 'rejected', reason)
             toast({ title: 'Listing rejected', body: 'The owner has been notified.', tone: 'info' })
           }}
         />

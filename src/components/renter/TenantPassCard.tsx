@@ -2,6 +2,7 @@ import { BadgeCheck, Check, Sparkles } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import { useCurrentUser, useStore } from '@/store/useStore'
 import { cn, formatMoney } from '@/lib/utils'
+import { useTenantPassCheckout } from './TenantPassCheckout'
 
 const TENANT_PASS_BENEFITS = [
   '20% off every renter service fee',
@@ -14,7 +15,7 @@ const TENANT_PASS_BENEFITS = [
 export function TenantPassCard({ variant = 'full', className }: { variant?: 'full' | 'compact'; className?: string }) {
   const user = useCurrentUser()
   const fees = useStore((s) => s.fees)
-  const buy = useStore((s) => s.buyTenantPass)
+  const { openCheckout: buy, modal } = useTenantPassCheckout()
   if (!user) return null
   const active = user.hasTenantPass
 
@@ -32,6 +33,7 @@ export function TenantPassCard({ variant = 'full', className }: { variant?: 'ful
           </div>
         </div>
         {!active && <Button size="sm" variant="accent" onClick={buy}>Get the pass</Button>}
+        {modal}
       </div>
     )
   }
@@ -56,6 +58,7 @@ export function TenantPassCard({ variant = 'full', className }: { variant?: 'ful
         ))}
       </ul>
       {!active && <Button className="mt-5" variant="accent" onClick={buy}>Buy Tenant Pass</Button>}
+      {modal}
     </div>
   )
 }

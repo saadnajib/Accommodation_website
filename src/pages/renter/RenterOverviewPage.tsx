@@ -1,8 +1,9 @@
-import { useMemo, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, BadgeCheck, Bell, CheckCircle2, FileText, Heart, Search, ShieldAlert, Sparkles, Zap } from 'lucide-react'
 import { Button, Card, CardHeader, EmptyState, Stat, VerificationBadge } from '@/components/ui'
-import { useCurrentUser, useStore } from '@/store/useStore'
+import { coverImage, useCurrentUser, useListingSummary, useLoad, useMyApplications, useStore } from '@/store/useStore'
+import { useTenantPassCheckout } from '@/components/renter/TenantPassCheckout'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
 import { isTerminal, renterAttention } from '@/components/shared/applicationUtils'
 import { ApplicationRow } from '@/components/renter/ApplicationRow'
@@ -22,28 +23,27 @@ function greeting() {
 
 export default function RenterOverviewPage() {
   const user = useCurrentUser()
-  const applications = useStore((s) => s.applications)
-  const reviews = useStore((s) => s.reviews)
+  const mine = useMyApplications()
+  const appMeta = useStore((s) => s.appMeta)
   const notifications = useStore((s) => s.notifications)
-  const saved = useStore((s) => s.savedListings)
+  const savedCount = useStore((s) => s.savedIds.length)
   const fees = useStore((s) => s.fees)
-  const buyPass = useStore((s) => s.buyTenantPass)
   const markRead = useStore((s) => s.markNotificationRead)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const fetchSaved = useStore((s) => s.fetchSaved)
+  const fetchNotifications = useStore((s) => s.fetchNotifications)
+  const { openCheckout: buyPass, modal: passCheckout } = useTenantPassCheckout()
   const nav = useNavigate()
+  const { loading } = useLoad(() => Promise.all([fetchMyApplications(), fetchSaved(), fetchNotifications()]), [fetchMyApplications, fetchSaved, fetchNotifications])
 
-  const mine = useMemo(
-    () => applications.filter((a) => a.renterId === user?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [applications, user?.id],
-  )
   if (!user) return null
 
   const active = mine.filter((a) => !isTerminal(a.status))
   const attention = mine.flatMap((a) => {
-    const kind = renterAttention(a, reviews, user.id)
+    const kind = renterAttention(a, appMeta[a.id] ? !!appMeta[a.id].myReview : undefined)
     return kind ? [{ app: a, kind }] : []
   })
-  const savedCount = (saved[user.id] ?? []).length
-  const myNotifs = notifications.filter((n) => n.userId === user.id).slice(0, 5)
+  const myNotifs = notifications.slice(0, 5)
 
   return (
     <div className="space-y-6">
@@ -115,7 +115,9 @@ export default function RenterOverviewPage() {
             <h2 className="text-lg font-bold text-ink-900">Recent applications</h2>
             {mine.length > 0 && <Link to="/dashboard/applications" className="text-sm font-semibold text-brand-700 hover:underline">View all</Link>}
           </div>
-          {mine.length === 0 ? (
+          {mine.length === 0 && loading ? (
+            <div className="space-y-3">{[0, 1].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+          ) : mine.length === 0 ? (
             <EmptyState icon={<FileText className="h-6 w-6" />} title="No applications yet" description="Find a home you love and apply in a few minutes. You only pay if the owner accepts you."
               action={<Link to="/listings"><Button>Browse homes</Button></Link>} />
           ) : (
@@ -130,7 +132,7 @@ export default function RenterOverviewPage() {
             <ul className="divide-y divide-ink-100">
               {myNotifs.map((n) => (
                 <li key={n.id}>
-                  <button onClick={() => { markRead(n.id); if (n.link) nav(n.link) }} className={cn('flex w-full gap-3 px-5 py-3 text-left transition-colors hover:bg-ink-50', !n.read && 'bg-brand-50/40')}>
+                  <button onClick={() => { void markRead(n.id); if (n.link) nav(n.link) }} className={cn('flex w-full gap-3 px-5 py-3 text-left transition-colors hover:bg-ink-50', !n.read && 'bg-brand-50/40')}>
                     <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.read ? 'bg-ink-200' : 'bg-brand-600')} />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium text-ink-900">{n.title}</span>
@@ -144,17 +146,19 @@ export default function RenterOverviewPage() {
           )}
         </Card>
       </div>
+      {passCheckout}
     </div>
   )
 }
 
 function AttentionItem({ id, listingId, children }: { id: string; listingId: string; children: ReactNode }) {
-  const listing = useStore((s) => s.listings.find((l) => l.id === listingId))
+  const listing = useListingSummary(listingId)
+  const img = coverImage(listing)
   return (
     <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
       <Link to={`/dashboard/applications/${id}`} className="flex min-w-0 items-center gap-3 sm:w-64 sm:shrink-0">
         <div className="h-11 w-14 shrink-0 overflow-hidden rounded-lg bg-ink-100">
-          {listing?.images[0] && <img src={listing.images[0]} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
+          {listing && img && <img src={img} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
         </div>
         <p className="line-clamp-2 text-sm font-semibold text-ink-900 hover:text-brand-800">{listing?.title ?? 'Listing'}</p>
       </Link>

@@ -4,12 +4,13 @@ import {
   ArrowLeft, BadgeCheck, Briefcase, CalendarDays, Check, CheckCircle2, CreditCard, Dog, FileSignature, Hourglass, Lock, Mail, MapPin,
   MessageSquare, Phone, Quote, ShieldCheck, Sparkles, Star, TrendingDown, TrendingUp, Users, Wallet, X,
 } from 'lucide-react'
-import { useApplication, useCurrentUser, useListing, useStore, useUser, useUserRating } from '@/store/useStore'
+import { coverImage, useApplication, useApplicationEvents, useApplicationMeta, useCurrentUser, useListing, useLoad, useStore, useUser, useUserRating } from '@/store/useStore'
+import type { ApplicationStatus } from '@/types'
 import {
   ApplicationStatusBadge, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Modal, Rating, Textarea,
 } from '@/components/ui'
 import { ButtonLink, MockPaymentModal, StarInput, Thumb } from '@/components/owner/OwnerUi'
-import { affordabilityRatio, isVerifying, priceDeltaPct, ratioTone, renterDisplayName } from '@/components/owner/utils'
+import { affordabilityRatio, isVerifying, priceDeltaPct, ratioTone } from '@/components/owner/utils'
 import { APPLICATION_STATUS } from '@/lib/status'
 import { cn, formatDate, formatMoney, timeAgo } from '@/lib/utils'
 
@@ -20,7 +21,11 @@ export default function OwnerApplicationDetailPage() {
   const listing = useListing(app?.listingId)
   const renter = useUser(app?.renterId)
   const rating = useUserRating(app?.renterId)
-  const myReview = useStore((s) => (app && me ? s.reviews.find((r) => r.applicationId === app.id && r.fromId === me.id) ?? null : null))
+  const events = useApplicationEvents(id)
+  const meta = useApplicationMeta(id)
+  const myReview = meta?.myReview ?? null
+  const fetchApplication = useStore((s) => s.fetchApplication)
+  const { loading } = useLoad(() => (id ? fetchApplication(id) : Promise.resolve(null)), [id, fetchApplication])
   const advance = useStore((s) => s.advanceApplication)
   const payFee = useStore((s) => s.payFee)
   const addReview = useStore((s) => s.addReview)
@@ -31,6 +36,7 @@ export default function OwnerApplicationDetailPage() {
   const [reason, setReason] = useState('')
   const [stars, setStars] = useState(0)
   const [reviewText, setReviewText] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const back = (
     <Link to="/owner/applicants" className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-ink-500 hover:text-ink-900">
@@ -38,6 +44,9 @@ export default function OwnerApplicationDetailPage() {
     </Link>
   )
 
+  if ((!app || !meta) && loading) {
+    return <div>{back}<div className="flex min-h-[40vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div></div>
+  }
   if (!app || !me || app.ownerId !== me.id) {
     return (
       <div>
@@ -59,7 +68,11 @@ export default function OwnerApplicationDetailPage() {
   }
 
   const p = app.profile
-  const name = renterDisplayName(app, renter)
+  // The API anonymises the renter ("Jonas W.") until contact is unlocked.
+  const name = renter?.name ?? 'StayBridge renter'
+  const ownerFee = app.ownerFee ?? 0
+  // The server's state machine decides which decisions are possible right now.
+  const can = (s: ApplicationStatus) => (meta ? meta.allowedTransitions.includes(s) : false)
   const asking = listing?.price ?? app.proposedPrice
   const currency = listing?.currency ?? 'USD'
   const delta = priceDeltaPct(app.proposedPrice, asking)
@@ -67,29 +80,35 @@ export default function OwnerApplicationDetailPage() {
   const ratioCls = { success: 'text-emerald-700 bg-emerald-50', warning: 'text-amber-800 bg-amber-50', danger: 'text-red-700 bg-red-50', neutral: 'text-ink-600 bg-ink-100' }[ratioTone(ratio)]
   const closeModal = () => setModal(null)
 
-  const accept = () => {
-    advance(app.id, 'owner_accepted', 'owner', note.trim() || undefined)
+  /** Run an async action with a busy flag; errors are toasted by the store. */
+  const run = async (fn: () => Promise<unknown>) => {
+    if (busy) return
+    setBusy(true)
+    try { await fn() } catch { /* toast shown by the store */ } finally { setBusy(false) }
+  }
+  const accept = () => run(async () => {
+    await advance(app.id, 'owner_accepted', note.trim() || undefined)
     toast({ title: 'Applicant accepted', body: 'Pay the success fee to unlock contact details and messaging.', tone: 'success' })
     setNote('')
     closeModal()
-  }
-  const decline = () => {
+  })
+  const decline = () => run(async () => {
     if (reason.trim().length < 5) return
-    advance(app.id, 'owner_declined', 'owner', reason.trim())
+    await advance(app.id, 'owner_declined', reason.trim())
     toast({ title: 'Applicant declined', body: "We'll let them know kindly. No fee is charged.", tone: 'info' })
     setReason('')
     closeModal()
-  }
-  const complete = () => {
-    advance(app.id, 'completed', 'owner', 'Contract signed')
+  })
+  const complete = () => run(async () => {
+    await advance(app.id, 'completed', 'Contract signed')
     toast({ title: 'Tenancy confirmed', body: `“${listing?.title ?? 'Your listing'}” is now marked as rented.`, tone: 'success' })
     closeModal()
-  }
-  const submitReview = () => {
+  })
+  const submitReview = () => run(async () => {
     if (!stars || reviewText.trim().length < 10) return
-    addReview({ applicationId: app.id, fromId: me.id, toId: app.renterId, rating: stars, text: reviewText.trim() })
+    await addReview({ applicationId: app.id, rating: stars, text: reviewText.trim() })
     toast({ title: 'Review published', body: 'Thanks for helping the StayBridge community.', tone: 'success' })
-  }
+  })
 
   return (
     <div>
@@ -105,7 +124,7 @@ export default function OwnerApplicationDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
           {/* ---------- Primary action panel ---------- */}
-          {app.status === 'sent_to_owner' && (
+          {(can('owner_accepted') || can('owner_declined')) && (
             <Card className="border-brand-200 bg-gradient-to-br from-brand-50 to-white">
               <CardBody className="py-5">
                 <div className="flex items-start gap-3">
@@ -114,13 +133,13 @@ export default function OwnerApplicationDetailPage() {
                     <h2 className="text-lg font-semibold text-ink-900">Your decision</h2>
                     <p className="mt-0.5 text-sm text-ink-600">
                       StayBridge has verified this renter's identity and income. Accepting is free — you only pay the success fee
-                      of {formatMoney(app.ownerFee, currency)} after accepting, to unlock contact.
+                      of {formatMoney(ownerFee, currency)} after accepting, to unlock contact.
                     </p>
                   </div>
                 </div>
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Button onClick={() => setModal('accept')}><Check className="h-4 w-4" /> Accept applicant</Button>
-                  <Button variant="outline" onClick={() => setModal('decline')}><X className="h-4 w-4" /> Decline</Button>
+                  {can('owner_accepted') && <Button onClick={() => setModal('accept')}><Check className="h-4 w-4" /> Accept applicant</Button>}
+                  {can('owner_declined') && <Button variant="outline" onClick={() => setModal('decline')}><X className="h-4 w-4" /> Decline</Button>}
                 </div>
               </CardBody>
             </Card>
@@ -135,12 +154,12 @@ export default function OwnerApplicationDetailPage() {
               />
               <CardBody>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <FeeLine label="You (owner)" amount={formatMoney(app.ownerFee, currency)} paid={app.ownerFeePaid} />
+                  <FeeLine label="You (owner)" amount={formatMoney(ownerFee, currency)} paid={app.ownerFeePaid} />
                   <FeeLine label="Renter" amount="Service fee" paid={app.renterFeePaid} />
                 </div>
                 {!app.ownerFeePaid && (
                   <Button variant="accent" className="mt-4 w-full sm:w-auto" onClick={() => setModal('pay')}>
-                    <CreditCard className="h-4 w-4" /> Pay success fee · {formatMoney(app.ownerFee, currency)}
+                    <CreditCard className="h-4 w-4" /> Pay success fee · {formatMoney(ownerFee, currency)}
                   </Button>
                 )}
               </CardBody>
@@ -155,11 +174,11 @@ export default function OwnerApplicationDetailPage() {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <ContactItem icon={<Users className="h-4 w-4" />} label="Full name" value={renter.name} />
                   <ContactItem icon={<Phone className="h-4 w-4" />} label="Phone" value={renter.phone ?? 'Not provided'} href={renter.phone ? `tel:${renter.phone.replace(/\s/g, '')}` : undefined} />
-                  <ContactItem icon={<Mail className="h-4 w-4" />} label="Email" value={renter.email} href={`mailto:${renter.email}`} />
+                  <ContactItem icon={<Mail className="h-4 w-4" />} label="Email" value={renter.email ?? 'Not provided'} href={renter.email ? `mailto:${renter.email}` : undefined} />
                 </div>
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                   <ButtonLink to={`/messages/${app.id}`}><MessageSquare className="h-4 w-4" /> Message tenant</ButtonLink>
-                  {app.status === 'contact_unlocked' && (
+                  {can('completed') && (
                     <Button variant="outline" onClick={() => setModal('complete')}><FileSignature className="h-4 w-4" /> Confirm tenancy signed</Button>
                   )}
                 </div>
@@ -178,11 +197,11 @@ export default function OwnerApplicationDetailPage() {
                     <p className="mt-2 text-sm text-ink-700">“{myReview.text}”</p>
                   </div>
                 ) : (
-                  <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); submitReview() }}>
+                  <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); void submitReview() }}>
                     <StarInput value={stars} onChange={setStars} />
                     <Textarea label="Your review" name="review" rows={3} value={reviewText} onChange={(e) => setReviewText(e.target.value)}
                       placeholder="Pays on time, communicative, looks after the home…" help="At least 10 characters. Reviews are public on the renter's profile." />
-                    <div><Button type="submit" disabled={!stars || reviewText.trim().length < 10}><Star className="h-4 w-4" /> Publish review</Button></div>
+                    <div><Button type="submit" disabled={!stars || reviewText.trim().length < 10} loading={busy}><Star className="h-4 w-4" /> Publish review</Button></div>
                   </form>
                 )}
               </CardBody>
@@ -241,7 +260,7 @@ export default function OwnerApplicationDetailPage() {
               {app.verification && (
                 <div className="flex items-start gap-2 rounded-xl bg-ink-50 px-3.5 py-2.5 text-xs text-ink-600">
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
-                  Identity document ({app.verification.idType.replace('_', ' ')}), selfie{app.verification.proofOfIncomeName ? ' and proof of income' : ''} checked by the StayBridge team.
+                  Identity document ({app.verification.idType.replace('_', ' ')}), selfie{app.verification.hasProofOfIncome ? ' and proof of income' : ''} checked by the StayBridge team.
                 </div>
               )}
 
@@ -276,13 +295,13 @@ export default function OwnerApplicationDetailPage() {
               {app.agreedPrice !== app.proposedPrice && <Row label="Agreed price" value={`${formatMoney(app.agreedPrice, currency)}/mo`} />}
               <Row label="Move-in" value={formatDate(app.moveInDate)} />
               <Row label="Stay length" value={`${app.stayMonths} months`} />
-              <Row label="Your success fee" value={formatMoney(app.ownerFee, currency)} />
+              <Row label="Your success fee" value={formatMoney(ownerFee, currency)} />
             </CardBody>
           </Card>
 
           {listing && (
             <Card className="overflow-hidden">
-              <Thumb src={listing.images[0]} alt={listing.title} className="aspect-[16/9] h-auto w-full rounded-none" />
+              <Thumb src={coverImage(listing)} alt={listing.title} className="aspect-[16/9] h-auto w-full rounded-none" />
               <CardBody>
                 <p className="font-semibold text-ink-900">{listing.title}</p>
                 <p className="mt-0.5 flex items-center gap-1 text-xs text-ink-400"><MapPin className="h-3.5 w-3.5" /> {listing.area} · {listing.city}</p>
@@ -301,7 +320,8 @@ export default function OwnerApplicationDetailPage() {
             <CardHeader title="Timeline" />
             <CardBody>
               <ol className="relative space-y-4 border-l border-ink-200 pl-5">
-                {[...app.timeline].reverse().map((ev, i) => (
+                {events.length === 0 && <li className="text-sm text-ink-400">No activity yet.</li>}
+                {[...events].reverse().map((ev, i) => (
                   <li key={`${ev.status}-${ev.at}-${i}`} className="relative">
                     <span className={cn('absolute -left-[26px] top-1 h-3 w-3 rounded-full ring-4 ring-white', i === 0 ? 'bg-brand-600' : 'bg-ink-300')} />
                     <p className="text-sm font-semibold text-ink-900">{APPLICATION_STATUS[ev.status].label}</p>
@@ -319,9 +339,9 @@ export default function OwnerApplicationDetailPage() {
 
       {/* ---------- Modals ---------- */}
       <Modal open={modal === 'accept'} onClose={closeModal} title="Accept this applicant?" size="sm"
-        footer={<><Button variant="ghost" onClick={closeModal}>Cancel</Button><Button onClick={accept}><Check className="h-4 w-4" /> Accept applicant</Button></>}>
+        footer={<><Button variant="ghost" onClick={closeModal}>Cancel</Button><Button onClick={() => void accept()} loading={busy}><Check className="h-4 w-4" /> Accept applicant</Button></>}>
         <p className="text-sm text-ink-600">
-          We'll tell {name.split(' ')[0]} the good news. Next, you pay a success fee of <span className="font-semibold text-ink-900">{formatMoney(app.ownerFee, currency)}</span>{' '}
+          We'll tell {name.split(' ')[0]} the good news. Next, you pay a success fee of <span className="font-semibold text-ink-900">{formatMoney(ownerFee, currency)}</span>{' '}
           and they pay their service fee — then contact details and messaging unlock.
         </p>
         <Textarea className="mt-4" label="Note for the renter" hint="(optional)" name="accept-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)}
@@ -329,14 +349,14 @@ export default function OwnerApplicationDetailPage() {
       </Modal>
 
       <Modal open={modal === 'decline'} onClose={closeModal} title="Decline this applicant" size="sm"
-        footer={<><Button variant="ghost" onClick={closeModal}>Cancel</Button><Button variant="danger" onClick={decline} disabled={reason.trim().length < 5}>Decline applicant</Button></>}>
+        footer={<><Button variant="ghost" onClick={closeModal}>Cancel</Button><Button variant="danger" onClick={() => void decline()} disabled={reason.trim().length < 5} loading={busy}>Decline applicant</Button></>}>
         <p className="text-sm text-ink-600">A short, respectful reason helps renters and helps us send you better matches. No fee is charged.</p>
         <Textarea className="mt-4" label="Reason" name="decline-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
           placeholder="e.g. We need someone who can move in earlier." help="Required · at least 5 characters" />
       </Modal>
 
       <Modal open={modal === 'complete'} onClose={closeModal} title="Confirm tenancy signed?" size="sm"
-        footer={<><Button variant="ghost" onClick={closeModal}>Not yet</Button><Button onClick={complete}><FileSignature className="h-4 w-4" /> Confirm</Button></>}>
+        footer={<><Button variant="ghost" onClick={closeModal}>Not yet</Button><Button onClick={() => void complete()} loading={busy}><FileSignature className="h-4 w-4" /> Confirm</Button></>}>
         <p className="text-sm text-ink-600">
           Confirm that you and {renter?.name ?? 'the renter'} have signed the rental contract. “{listing?.title}” will be marked as rented and removed from search.
         </p>
@@ -344,11 +364,11 @@ export default function OwnerApplicationDetailPage() {
 
       <MockPaymentModal
         open={modal === 'pay'} onClose={closeModal} title="Pay success fee" lineItem={`Success fee · ${listing?.title ?? 'placement'}`}
-        amount={app.ownerFee} currency={currency}
+        amount={ownerFee} currency={currency}
         description="One-off fee for a verified tenant placement. It unlocks the renter's full name, phone and email, plus in-app messaging, once the renter has paid too."
-        onPaid={() => {
-          payFee(app.id, 'owner')
-          toast({ title: 'Success fee paid', body: app.renterFeePaid ? 'Contact is now unlocked — say hello!' : "We'll unlock contact as soon as the renter pays.", tone: 'success' })
+        onPaid={async (card) => {
+          const after = await payFee(app.id, card)
+          toast({ title: 'Success fee paid', body: after.contactUnlocked ? 'Contact is now unlocked — say hello!' : "We'll unlock contact as soon as the renter pays.", tone: 'success' })
         }}
       />
     </div>

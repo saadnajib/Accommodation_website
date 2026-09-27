@@ -1,4 +1,5 @@
 import type { Listing, PropertyType } from '@/types'
+import type { NewListingInput } from '@/store/useStore'
 
 export interface ListingFormState {
   title: string
@@ -50,7 +51,7 @@ export function emptyForm(): ListingFormState {
 
 export function formFromListing(l: Listing): ListingFormState {
   return {
-    title: l.title, type: l.type, description: l.description, city: l.city, area: l.area, address: l.address,
+    title: l.title, type: l.type, description: l.description, city: l.city, area: l.area, address: l.address ?? '',
     bedrooms: String(l.bedrooms), bathrooms: String(l.bathrooms), sizeSqm: String(l.sizeSqm), furnished: l.furnished,
     amenities: [...l.amenities], houseRules: [...l.houseRules],
     price: String(l.price), deposit: String(l.deposit), depositTouched: true, billsIncluded: l.billsIncluded,
@@ -60,9 +61,10 @@ export function formFromListing(l: Listing): ListingFormState {
 }
 
 const isInt = (v: string) => /^\d+$/.test(v.trim())
-export const isUrl = (v: string) => /^https?:\/\/\S+\.\S+/i.test(v.trim())
-export const isDataImage = (v: string) => /^data:image\/[a-z0-9.+-]+;base64,/i.test(v)
-export const isPhoto = (v: string) => isUrl(v) || isDataImage(v)
+export const isUrl = (v: string) => /^https:\/\/\S+\.\S+/i.test(v.trim())
+/** A photo uploaded to the API (POST /api/files?kind=listing_photo). */
+export const isUploadedFile = (v: string) => /^\/api\/files\/[\w-]+$/.test(v.trim())
+export const isPhoto = (v: string) => isUrl(v) || isUploadedFile(v)
 
 export function validate(f: ListingFormState): Record<string, string> {
   const e: Record<string, string> = {}
@@ -103,7 +105,7 @@ export function firstInvalidStep(errors: Record<string, string>) {
   return i === -1 ? STEPS.length - 1 : i
 }
 
-export function toListingInput(f: ListingFormState) {
+export function toListingInput(f: ListingFormState): NewListingInput {
   return {
     title: f.title.trim(),
     description: f.description.trim(),
@@ -112,7 +114,6 @@ export function toListingInput(f: ListingFormState) {
     area: f.area.trim(),
     address: f.address.trim(),
     price: Number(f.price),
-    currency: 'USD',
     deposit: Number(f.deposit),
     billsIncluded: f.billsIncluded,
     availableFrom: new Date(`${f.availableFrom}T12:00:00`).toISOString(),
@@ -142,14 +143,8 @@ export function loadDraft(): { form: ListingFormState; step: number } | null {
 }
 
 export function saveDraft(form: ListingFormState, step: number) {
-  try {
-    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, step }))
-  } catch {
-    // Uploaded photos (data URLs) can exceed the sessionStorage quota: keep the rest of the draft.
-    try {
-      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form: { ...form, images: form.images.filter((x) => !isDataImage(x)) }, step }))
-    } catch { /* storage unavailable */ }
-  }
+  // Photos are already uploaded; the draft only holds their /api/files/<id> URLs.
+  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, step })) } catch { /* storage unavailable */ }
 }
 
 export function clearDraft() {

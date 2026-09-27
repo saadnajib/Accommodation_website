@@ -1,8 +1,9 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BadgeCheck, Database, Percent, RotateCcw, Save, ScrollText } from 'lucide-react'
 import { Button, Card, CardBody, CardHeader, Input, PageHeader } from '@/components/ui'
 import { useStore } from '@/store/useStore'
+import { isApiError } from '@/lib/api'
 import { AGREEMENT_CLAUSES, DEFAULT_FEES, computeFees } from '@/lib/fees'
 import { formatMoney } from '@/lib/utils'
 import type { FeeSettings } from '@/types'
@@ -23,11 +24,22 @@ const PREVIEW_RENTS = [500, 1000, 2000, 3500]
 export default function AdminSettingsPage() {
   const fees = useStore((s) => s.fees)
   const updateFees = useStore((s) => s.updateFees)
+  const fetchAdminSettings = useStore((s) => s.fetchAdminSettings)
   const resetDemo = useStore((s) => s.resetDemo)
   const toast = useStore((s) => s.toast)
   const navigate = useNavigate()
   const [draft, setDraft] = useState<Draft>(() => toDraft(fees))
   const [confirmReset, setConfirmReset] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [serverErrors, setServerErrors] = useState<Partial<Record<keyof Draft, string>>>({})
+
+  // Load the authoritative settings; refresh the form when they arrive (unless the admin already edited it).
+  const [loadedFees, setLoadedFees] = useState(fees)
+  useEffect(() => { void fetchAdminSettings().catch(() => {}) }, [fetchAdminSettings])
+  if (loadedFees !== fees) {
+    setLoadedFees(fees)
+    if (JSON.stringify(toDraft(loadedFees)) === JSON.stringify(draft)) setDraft(toDraft(fees))
+  }
 
   const errors = useMemo(() => {
     const e: Partial<Record<keyof Draft, string>> = {}
@@ -38,8 +50,8 @@ export default function AdminSettingsPage() {
     ;(['minFee', 'tenantPassPrice', 'featuredListingPrice'] as const).forEach((k) => {
       if (draft[k].trim() === '' || !Number.isFinite(num(k)) || num(k) < 0) e[k] = 'Enter a positive amount'
     })
-    return e
-  }, [draft])
+    return { ...serverErrors, ...e }
+  }, [draft, serverErrors])
   const valid = Object.keys(errors).length === 0
 
   const parsed: FeeSettings = valid ? {
@@ -53,19 +65,33 @@ export default function AdminSettingsPage() {
   const dirty = JSON.stringify(toDraft(fees)) !== JSON.stringify(draft)
   const cur = fees.currency
 
-  const set = (k: keyof Draft) => (e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, [k]: e.target.value }))
+  const set = (k: keyof Draft) => (e: ChangeEvent<HTMLInputElement>) => {
+    setDraft((d) => ({ ...d, [k]: e.target.value }))
+    setServerErrors((x) => (x[k] ? { ...x, [k]: undefined } : x))
+  }
 
+  const persist = async (next: FeeSettings, message: { title: string; body?: string; tone: 'success' | 'info' }) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const savedFees = await updateFees(next)
+      setDraft(toDraft(savedFees))
+      setServerErrors({})
+      toast(message)
+    } catch (err) {
+      if (isApiError(err)) {
+        const f = err.fieldErrors
+        setServerErrors(Object.fromEntries(Object.entries(f).map(([k, v]) => [k.replace(/^fees\./, ''), v])) as Partial<Record<keyof Draft, string>>)
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
   const save = () => {
     if (!valid) return
-    updateFees(parsed)
-    setDraft(toDraft(parsed))
-    toast({ title: 'Fee settings saved', body: 'New applications use these rates. Existing fees update when the agreed price changes.', tone: 'success' })
+    void persist(parsed, { title: 'Fee settings saved', body: 'New applications use these rates. Existing fees update when the agreed price changes.', tone: 'success' })
   }
-  const resetDefaults = () => {
-    updateFees(DEFAULT_FEES)
-    setDraft(toDraft(DEFAULT_FEES))
-    toast({ title: 'Fees reset to defaults', tone: 'info' })
-  }
+  const resetDefaults = () => void persist({ ...DEFAULT_FEES, currency: fees.currency }, { title: 'Fees reset to defaults', tone: 'info' })
 
   return (
     <div>
@@ -89,9 +115,9 @@ export default function AdminSettingsPage() {
                   value={draft.featuredListingPrice} onChange={set('featuredListingPrice')} error={errors.featuredListingPrice} />
               </div>
               <div className="flex flex-wrap items-center gap-2 border-t border-ink-100 pt-4">
-                <Button type="submit" disabled={!valid || !dirty}><Save className="h-4 w-4" /> Save changes</Button>
+                <Button type="submit" disabled={!valid || !dirty} loading={saving}><Save className="h-4 w-4" /> Save changes</Button>
                 <Button type="button" variant="outline" disabled={!dirty} onClick={() => setDraft(toDraft(fees))}>Discard</Button>
-                <Button type="button" variant="ghost" className="sm:ml-auto" onClick={resetDefaults}><RotateCcw className="h-4 w-4" /> Reset to defaults</Button>
+                <Button type="button" variant="ghost" className="sm:ml-auto" onClick={resetDefaults} disabled={saving}><RotateCcw className="h-4 w-4" /> Reset to defaults</Button>
               </div>
             </form>
           </CardBody>
@@ -147,10 +173,10 @@ export default function AdminSettingsPage() {
 
         <Card className="self-start border-red-200">
           <CardHeader title={<span className="inline-flex items-center gap-2"><Database className="h-4 w-4 text-ink-400" /> Demo data</span>}
-            description="Restore all users, listings, applications and fees to the original demo state." />
+            description="Wipe the database and reseed the demo accounts, listings and applications (disabled in production)." />
           <CardBody>
             <Button variant="danger" onClick={() => setConfirmReset(true)}><RotateCcw className="h-4 w-4" /> Reset demo data</Button>
-            <p className="mt-2 text-xs text-ink-400">You will be signed out.</p>
+            <p className="mt-2 text-xs text-ink-400">Everyone, including you, is signed out.</p>
           </CardBody>
         </Card>
       </div>
@@ -160,12 +186,12 @@ export default function AdminSettingsPage() {
         noNote
         onClose={() => setConfirmReset(false)}
         title="Reset demo data?"
-        body="All changes made in this browser — applications, listings, messages and fee settings — are replaced with the original demo data, and you are signed out."
+        body="All data on the server — applications, listings, messages, uploads and fee settings — is replaced with the original demo data, and every session is signed out."
         confirmLabel="Reset everything"
         variant="danger"
-        onConfirm={() => {
-          resetDemo()
-          navigate('/login')
+        onConfirm={async () => {
+          await resetDemo()
+          navigate('/login', { replace: true })
           toast({ title: 'Demo data reset', body: 'Sign in with any demo account to continue.', tone: 'info' })
         }}
       />

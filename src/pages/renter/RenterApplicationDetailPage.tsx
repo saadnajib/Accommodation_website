@@ -7,7 +7,8 @@ import {
 import {
   ApplicationStatusBadge, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Rating, Textarea,
 } from '@/components/ui'
-import { useApplication, useCurrentUser, useListing, useStore, useUser, useUserRating } from '@/store/useStore'
+import { coverImage, useApplication, useApplicationEvents, useApplicationMeta, useCurrentUser, useListing, useLoad, useStore, useUser, useUserRating } from '@/store/useStore'
+import type { CardInput } from '@/lib/api'
 import { APPLICATION_STATUS, pipelineIndex } from '@/lib/status'
 import { cn, formatDate, formatMoney, timeAgo } from '@/lib/utils'
 import { publicName } from '@/components/listings/helpers'
@@ -48,7 +49,10 @@ export default function RenterApplicationDetailPage() {
   const listing = useListing(app?.listingId)
   const owner = useUser(app?.ownerId)
   const ownerRating = useUserRating(app?.ownerId)
-  const reviews = useStore((s) => s.reviews)
+  const events = useApplicationEvents(id)
+  const meta = useApplicationMeta(id)
+  const fetchApplication = useStore((s) => s.fetchApplication)
+  const { loading } = useLoad(() => (id ? fetchApplication(id) : Promise.resolve(null)), [id, fetchApplication])
   const payFee = useStore((s) => s.payFee)
   const advance = useStore((s) => s.advanceApplication)
   const addReview = useStore((s) => s.addReview)
@@ -58,6 +62,7 @@ export default function RenterApplicationDetailPage() {
   const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [rating, setRating] = useState(0)
   const [reviewText, setReviewText] = useState('')
+  const [posting, setPosting] = useState(false)
 
   useEffect(() => {
     if (loc.hash === '#review') {
@@ -67,6 +72,9 @@ export default function RenterApplicationDetailPage() {
   }, [loc.hash])
 
   if (!user) return null
+  if ((!app || !meta) && loading) {
+    return <div className="flex min-h-[40vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
   if (!app || app.renterId !== user.id) {
     return (
       <EmptyState icon={<FileText className="h-6 w-6" />} title="Application not found"
@@ -78,29 +86,33 @@ export default function RenterApplicationDetailPage() {
   const currency = listing?.currency ?? 'USD'
   const status = app.status
   const canPay = status === 'awaiting_fees' && !app.renterFeePaid
-  const canWithdraw = !isTerminal(status) && status !== 'contact_unlocked'
-  const myReview = reviews.find((r) => r.applicationId === app.id && r.fromId === user.id)
+  // The server's state machine decides; fall back to the documented rule until the detail has loaded.
+  const canWithdraw = meta ? meta.allowedTransitions.includes('cancelled') : !isTerminal(status) && status !== 'contact_unlocked'
+  const myReview = meta?.myReview ?? null
+  const renterFee = app.renterFee ?? 0
   const acceptedStage = pipelineIndex(status) >= pipelineIndex('owner_accepted')
 
   const closePay = () => {
     setPayOpen(false)
     if (search.has('pay')) { search.delete('pay'); setSearch(search, { replace: true }) }
   }
-  const onPaid = () => {
-    payFee(app.id, 'renter')
-    const after = useStore.getState().applications.find((a) => a.id === app.id)
-    toast(after?.contactUnlocked
+  const onPaid = async (card: CardInput) => {
+    const after = await payFee(app.id, card)
+    toast(after.contactUnlocked
       ? { title: 'Payment received — contact unlocked!', body: 'You can now message the owner and see their details.', tone: 'success' }
       : { title: 'Payment received', body: 'We’ll unlock contact as soon as the owner pays their fee.', tone: 'success' })
   }
-  const withdraw = () => {
-    advance(app.id, 'cancelled', 'renter', 'Withdrawn by renter.')
+  const withdraw = async () => {
+    await advance(app.id, 'cancelled', 'Withdrawn by renter.')
     toast({ title: 'Application withdrawn', body: 'No fee has been charged.', tone: 'info' })
   }
-  const submitReview = () => {
-    if (!rating || reviewText.trim().length < MIN_REVIEW) return
-    addReview({ applicationId: app.id, fromId: user.id, toId: app.ownerId, rating, text: reviewText.trim() })
-    toast({ title: 'Thanks for your review!', body: 'It will appear on the owner’s profile.', tone: 'success' })
+  const submitReview = async () => {
+    if (!rating || reviewText.trim().length < MIN_REVIEW || posting) return
+    setPosting(true)
+    try {
+      await addReview({ applicationId: app.id, rating, text: reviewText.trim() })
+      toast({ title: 'Thanks for your review!', body: 'It will appear on the owner’s profile.', tone: 'success' })
+    } catch { /* toast shown by the store */ } finally { setPosting(false) }
   }
 
   const renterFeeBadge = app.renterFeePaid
@@ -118,7 +130,7 @@ export default function RenterApplicationDetailPage() {
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
           <div className="aspect-[16/9] w-full shrink-0 overflow-hidden rounded-xl bg-ink-100 sm:aspect-auto sm:h-24 sm:w-32">
-            {listing?.images[0] && <img src={listing.images[0]} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
+            {listing && coverImage(listing) && <img src={coverImage(listing)} alt={listing.title} loading="lazy" className="h-full w-full object-cover" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -135,7 +147,7 @@ export default function RenterApplicationDetailPage() {
           )}
         </div>
         <div className="border-t border-ink-100 px-4 py-5 sm:px-5">
-          <ApplicationProgress application={app} />
+          <ApplicationProgress application={app} events={events} />
         </div>
       </Card>
 
@@ -150,7 +162,7 @@ export default function RenterApplicationDetailPage() {
           <p className="mt-0.5 font-semibold text-ink-900">{APPLICATION_STATUS[status].description}</p>
           <p className="mt-0.5 text-sm text-ink-600">{nextStepHint(status, app.renterFeePaid, app.ownerFeePaid)}</p>
         </div>
-        {canPay && <Button variant="accent" onClick={() => setPayOpen(true)} className="shrink-0"><CreditCard className="h-4 w-4" /> Pay {formatMoney(app.renterFee, currency)}</Button>}
+        {canPay && <Button variant="accent" onClick={() => setPayOpen(true)} className="shrink-0"><CreditCard className="h-4 w-4" /> Pay {formatMoney(renterFee, currency)}</Button>}
         {status === 'contact_unlocked' && <Link to={`/messages/${app.id}`} className="shrink-0"><Button><MessageSquare className="h-4 w-4" /> Open messages</Button></Link>}
         {isFailed(status) && <Link to="/listings" className="shrink-0"><Button variant="outline">Browse homes <ArrowRight className="h-4 w-4" /></Button></Link>}
       </div>
@@ -182,7 +194,7 @@ export default function RenterApplicationDetailPage() {
                       </a>
                     )}
                   </div>
-                  {listing && (
+                  {listing?.address && (
                     <div className="flex items-start gap-3 rounded-xl border border-ink-200 p-3 text-sm">
                       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-700" />
                       <div><p className="font-medium text-ink-800">{listing.address}</p><p className="text-xs text-ink-400">{listing.area}, {listing.city}</p></div>
@@ -210,12 +222,12 @@ export default function RenterApplicationDetailPage() {
                     <p className="mt-2 text-sm text-ink-700">“{myReview.text}”</p>
                   </div>
                 ) : (
-                  <form onSubmit={(e) => { e.preventDefault(); submitReview() }} className="space-y-4">
+                  <form onSubmit={(e) => { e.preventDefault(); void submitReview() }} className="space-y-4">
                     <RatingInput value={rating} onChange={setRating} label="Rate the owner" />
                     <Textarea label="Your review" name="review" rows={4} value={reviewText} onChange={(e) => setReviewText(e.target.value)}
                       placeholder="Was the home as described? Was the owner responsive and fair?"
                       help={`${reviewText.trim().length}/${MIN_REVIEW} characters minimum`} />
-                    <Button type="submit" disabled={!rating || reviewText.trim().length < MIN_REVIEW}>Post review</Button>
+                    <Button type="submit" disabled={!rating || reviewText.trim().length < MIN_REVIEW} loading={posting}>Post review</Button>
                   </form>
                 )}
               </CardBody>
@@ -225,7 +237,7 @@ export default function RenterApplicationDetailPage() {
           {/* Timeline */}
           <Card>
             <CardHeader title="Activity" description="Every step of your application." />
-            <CardBody><ApplicationTimeline events={app.timeline} viewer="renter" /></CardBody>
+            <CardBody>{events.length ? <ApplicationTimeline events={events} viewer="renter" /> : <p className="text-sm text-ink-400">No activity yet.</p>}</CardBody>
           </Card>
 
           {/* What you sent */}
@@ -238,7 +250,7 @@ export default function RenterApplicationDetailPage() {
               </div>
               <dl className="grid gap-3 sm:grid-cols-2">
                 {app.verification && (
-                  <div><dt className="text-xs text-ink-400">Identity document</dt><dd className="font-medium text-ink-800">{ID_TYPE_LABELS[app.verification.idType]} · <span className="font-mono">{app.verification.idNumberMasked}</span></dd></div>
+                  <div><dt className="text-xs text-ink-400">Identity document</dt><dd className="font-medium text-ink-800">{ID_TYPE_LABELS[app.verification.idType]}{app.verification.idNumberMasked && <> · <span className="font-mono">{app.verification.idNumberMasked}</span></>}</dd></div>
                 )}
                 {app.profile && (
                   <>
@@ -277,7 +289,7 @@ export default function RenterApplicationDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium text-ink-800">Your service fee</p>
-                  <p className="text-lg font-bold text-ink-900">{formatMoney(app.renterFee, currency)}</p>
+                  <p className="text-lg font-bold text-ink-900">{formatMoney(renterFee, currency)}</p>
                   {user.hasTenantPass && <p className="flex items-center gap-1 text-xs text-emerald-700"><Sparkles className="h-3 w-3" /> Tenant Pass discount applied</p>}
                 </div>
                 {renterFeeBadge}
@@ -299,7 +311,7 @@ export default function RenterApplicationDetailPage() {
         </aside>
       </div>
 
-      <PaymentModal open={payOpen && canPay} onClose={closePay} onPay={onPaid} amount={app.renterFee} currency={currency}
+      <PaymentModal open={payOpen && canPay} onClose={closePay} onPay={onPaid} amount={renterFee} currency={currency}
         description={listing ? `Renter service fee · ${listing.title}` : 'Renter service fee'} />
       <ConfirmModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} onConfirm={withdraw} title="Withdraw application?" confirmLabel="Withdraw">
         This cancels your application{listing ? <> for <span className="font-semibold text-ink-800">{listing.title}</span></> : null}. The owner won’t see your profile, and no fee will be charged. You can apply again later if the home is still available.

@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { CreditCard, Lock } from 'lucide-react'
 import { Button, Input, Modal } from '@/components/ui'
 import { formatMoney } from '@/lib/utils'
+import type { CardInput } from '@/lib/api'
 
-/** Mock card payment dialog. Any input is accepted; nothing is charged. */
+/**
+ * Mock card payment dialog. The card fields are sent to the API's mock payment endpoint; nothing is
+ * charged. `onPay` should reject on failure (the store already toasts the error) to keep the dialog open.
+ */
 export function PaymentModal({ open, onClose, onPay, amount, currency, title = 'Pay service fee', description }: {
-  open: boolean; onClose: () => void; onPay: () => void; amount: number; currency: string; title?: string; description?: string
+  open: boolean; onClose: () => void; onPay: (card: CardInput) => Promise<unknown>; amount: number; currency: string; title?: string; description?: string
 }) {
   const [card, setCard] = useState('')
   const [expiry, setExpiry] = useState('')
   const [cvc, setCvc] = useState('')
   const [name, setName] = useState('')
   const [processing, setProcessing] = useState(false)
-  const timer = useRef<number | undefined>(undefined)
-
-  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   const formatCard = (v: string) => v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
   const formatExpiry = (v: string) => {
@@ -22,15 +23,21 @@ export function PaymentModal({ open, onClose, onPay, amount, currency, title = '
     return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d
   }
 
-  const submit = (e: FormEvent) => {
+  const valid = card.replace(/\s/g, '').length >= 12 && /^\d{2}\/\d{2}$/.test(expiry) && /^\d{3,4}$/.test(cvc)
+
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (!valid || processing) return
     setProcessing(true)
-    timer.current = window.setTimeout(() => {
-      setProcessing(false)
+    try {
+      await onPay({ number: card.replace(/\s/g, ''), exp: expiry, cvc })
       setCard(''); setExpiry(''); setCvc(''); setName('')
-      onPay()
       onClose()
-    }, 700)
+    } catch {
+      /* error already shown as a toast; keep the dialog open so the user can retry */
+    } finally {
+      setProcessing(false)
+    }
   }
 
   return (
@@ -48,8 +55,8 @@ export function PaymentModal({ open, onClose, onPay, amount, currency, title = '
           <Input label="Expiry" name="cc-exp" inputMode="numeric" autoComplete="cc-exp" value={expiry} onChange={(e) => setExpiry(formatExpiry(e.target.value))} placeholder="MM/YY" />
           <Input label="CVC" name="cc-csc" inputMode="numeric" autoComplete="cc-csc" value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" />
         </div>
-        <p className="flex items-center gap-1.5 text-xs text-ink-400"><Lock className="h-3.5 w-3.5" /> Demo checkout — no real payment is taken. Any details work.</p>
-        <Button type="submit" full size="lg" loading={processing}>Pay {formatMoney(amount, currency)}</Button>
+        <p className="flex items-center gap-1.5 text-xs text-ink-400"><Lock className="h-3.5 w-3.5" /> Demo checkout — no real payment is taken. Try 4242 4242 4242 4242, any future expiry and CVC.</p>
+        <Button type="submit" full size="lg" loading={processing} disabled={!valid}>Pay {formatMoney(amount, currency)}</Button>
       </form>
     </Modal>
   )

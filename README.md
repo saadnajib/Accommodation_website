@@ -30,43 +30,60 @@ Fees are configurable in the admin console under **Fees & settings**.
 | Owner | `/owner` | `marco@staybridge.demo` |
 | Admin | `/admin` | `admin@staybridge.demo` |
 
-Sign in is by email only. All data lives in the browser (`localStorage`) so the demo works without a backend. Use **Reset demo data** in the admin settings to start over.
+Every demo user's password is `Demo!Pass2026`. The admin password comes from `ADMIN_PASSWORD` in `server/.env` (default `ChangeMe!Admin2026`). Use **Reset demo data** in the admin settings to start over.
 
 ## Stack
 
-- React 19, TypeScript, Vite
-- Tailwind CSS v4
-- React Router v7
-- Zustand (persisted store)
-- lucide-react icons
+- Client: React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7, Zustand (API cache), lucide-react
+- Server: Node 22, Express 5, Drizzle ORM on SQLite (Postgres-ready), zod validation, helmet, express-rate-limit, multer
+- Tests: vitest + supertest against an in-memory database
+
+See [SECURITY.md](SECURITY.md) for the security controls and the launch checklist.
 
 ## Run it
 
 ```bash
-npm install
-npm run dev
+npm install                      # also installs server dependencies
+cp server/.env.example server/.env
+# edit server/.env: set SESSION_SECRET to a long random string
+npm run dev                      # Vite on :5173 with /api proxied to the server on :3000
 ```
 
+The server creates the admin account from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first start and seeds demo data when `SEED_DEMO=true`.
+
 ```bash
-npm run build   # type-check and production build
+npm run build    # type-check and build client and server
+npm test         # server API tests
 npm run lint
 ```
+
+Production: build, then run `npm start --prefix server` with `NODE_ENV=production`. The server serves the built client from `dist/` on the same origin, so no CORS is needed. Put it behind HTTPS.
+
+## API
+
+The contract is in [server/API.md](server/API.md). Privacy rules (who sees names, contacts, addresses, documents) are enforced server-side in `server/src/lib/serialize.ts`, and the application state machine in `server/src/lib/stateMachine.ts`.
 
 ## Project layout
 
 ```
-src/
-  types/        domain model
-  data/seed.ts  demo users, listings, applications
-  store/        zustand store: state, actions, selectors
-  lib/          fees, status labels, utilities
-  components/   ui kit, layout shells, per-area components
-  pages/        public, auth, renter, owner, admin
+src/                client
+  types/            API shapes
+  store/            zustand cache over the API
+  lib/api.ts        fetch wrapper (cookies, CSRF header, uploads)
+  components/       ui kit, layout shells, per-area components
+  pages/            public, auth, renter, owner, admin
+server/
+  src/db/           Drizzle schema and connection
+  src/routes/       auth, files, listings, applications, messages, reviews, me, admin
+  src/lib/          sessions, crypto, serializers, state machine, fees, files
+  src/middleware/   security headers, CORS, CSRF, rate limits, auth, validation
+  src/__tests__/    API tests
+  drizzle/          SQL migrations
 ```
 
 ## Next steps for production
 
-- Replace the store with a real API and database. The store's action signatures map directly to endpoints.
-- Real file upload and ID verification (for example a KYC provider).
-- Payment provider for fees and Tenant Pass purchases.
-- Email and push notifications.
+- Payment provider (Stripe or similar) with hosted card fields and webhooks. Payments are mocked today.
+- Email verification and password reset by email.
+- KYC provider for identity checks, or encrypted storage for uploaded documents.
+- Postgres and S3 for scale; the schema and file helper are the only places that change.

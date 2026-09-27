@@ -1,9 +1,9 @@
-import type { Application, Listing, RenterProfile, RenterVerification } from '@/types'
+import type { IdType, Listing, RenterProfile } from '@/types'
+import type { NewApplicationInput } from '@/store/useStore'
 import { AGREEMENT_CLAUSES } from '@/lib/fees'
-import { maskId } from '@/lib/utils'
-import type { StoredFile } from './FileField'
+import { MAX_DOC_BYTES, type StoredFile } from './FileField'
 
-export type IdType = RenterVerification['idType']
+export type { IdType }
 
 export interface ApplyDraft {
   step: number
@@ -15,10 +15,9 @@ export interface ApplyDraft {
   // b. agreement
   clauses: boolean[]
   acceptAll: boolean
-  // c. verification
-  verifyMode: 'reuse' | 'new'
+  // c. verification (documents are uploaded immediately; the draft only keeps their file ids)
   idType: IdType | ''
-  /** Raw ID number is kept in memory only; it is never written to sessionStorage. */
+  /** Raw ID number is kept in memory only; it is never written to sessionStorage. The server keeps only the last 4. */
   idNumber: string
   idDocument: StoredFile | null
   selfie: StoredFile | null
@@ -40,7 +39,6 @@ export const STEPS = ['Your offer', 'Agreement', 'Verify identity', 'About you',
 
 export const MIN_MESSAGE = 40
 export const MIN_ABOUT = 60
-const MAX_FILE = 10 * 1024 * 1024
 
 export const draftKey = (listingId: string) => `staybridge:apply:${listingId}`
 
@@ -56,7 +54,7 @@ export function minMoveIn(listing: Listing) {
   return avail > today ? avail : today
 }
 
-export function emptyDraft(listing: Listing, canReuse: boolean, prev?: RenterProfile): ApplyDraft {
+export function emptyDraft(listing: Listing, prev?: RenterProfile): ApplyDraft {
   return {
     step: 0,
     proposedPrice: String(listing.price),
@@ -65,7 +63,6 @@ export function emptyDraft(listing: Listing, canReuse: boolean, prev?: RenterPro
     message: '',
     clauses: AGREEMENT_CLAUSES.map(() => false),
     acceptAll: false,
-    verifyMode: canReuse ? 'reuse' : 'new',
     idType: '',
     idNumber: '',
     idDocument: null,
@@ -89,9 +86,10 @@ export function loadDraft(listingId: string, fallback: ApplyDraft): ApplyDraft {
     const parsed = JSON.parse(raw) as Partial<ApplyDraft>
     const merged = { ...fallback, ...parsed, idNumber: '' }
     if (!Array.isArray(merged.clauses) || merged.clauses.length !== AGREEMENT_CLAUSES.length) merged.clauses = fallback.clauses
-    // Without the raw ID number, a "new upload" draft can't pass step 3 — send the user back there at most.
-    if (merged.verifyMode === 'new' && merged.step > 2) merged.step = 2
-    if (fallback.verifyMode === 'new') merged.verifyMode = 'new'
+    // Drop file references from older drafts that predate server uploads.
+    for (const k of ['idDocument', 'selfie', 'income'] as const) if (merged[k] && !merged[k]?.id) merged[k] = null
+    // Without the raw ID number the draft can't pass step 3 — send the user back there at most.
+    if (merged.step > 2) merged.step = 2
     return merged
   } catch {
     return fallback
@@ -138,17 +136,16 @@ export function validateAgreement(d: ApplyDraft): Errors {
 }
 
 export function validateVerify(d: ApplyDraft): Errors {
-  if (d.verifyMode === 'reuse') return {}
   const e: Errors = {}
   if (!d.idType) e.idType = 'Select a document type.'
   const id = d.idNumber.replace(/\s/g, '')
   if (!id) e.idNumber = 'Enter your document number.'
   else if (!/^[A-Za-z0-9-]{5,20}$/.test(id)) e.idNumber = 'Use 5–20 letters or digits.'
-  if (!d.idDocument) e.idDocument = 'Upload a photo or scan of your ID.'
-  else if (d.idDocument.size > MAX_FILE) e.idDocument = 'File is larger than 10 MB.'
-  if (!d.selfie) e.selfie = 'Upload a selfie so we can match you to your ID.'
-  else if (d.selfie.size > MAX_FILE) e.selfie = 'File is larger than 10 MB.'
-  if (d.income && d.income.size > MAX_FILE) e.income = 'File is larger than 10 MB.'
+  if (!d.idDocument?.id) e.idDocument = 'Upload a photo or scan of your ID.'
+  else if (d.idDocument.size > MAX_DOC_BYTES) e.idDocument = 'File is larger than 8 MB.'
+  if (!d.selfie?.id) e.selfie = 'Upload a selfie so we can match you to your ID.'
+  else if (d.selfie.size > MAX_DOC_BYTES) e.selfie = 'File is larger than 8 MB.'
+  if (d.income && d.income.size > MAX_DOC_BYTES) e.income = 'File is larger than 8 MB.'
   return e
 }
 
@@ -177,17 +174,35 @@ export function validateStep(step: number, d: ApplyDraft, listing: Listing): Err
   }
 }
 
-export function buildVerification(d: ApplyDraft, previous?: Application): RenterVerification {
-  const at = new Date().toISOString()
-  if (d.verifyMode === 'reuse' && previous?.verification) return { ...previous.verification, submittedAt: at }
+/** Verification payload for POST /applications. The raw ID number goes to the server, which masks it. */
+export function buildVerification(d: ApplyDraft): NewApplicationInput['verification'] {
   return {
     idType: (d.idType || 'passport') as IdType,
-    idNumberMasked: maskId(d.idNumber.replace(/\s/g, '')),
-    idDocumentName: d.idDocument?.name ?? '',
-    selfieName: d.selfie?.name ?? '',
-    proofOfIncomeName: d.income?.name,
-    submittedAt: at,
+    idNumber: d.idNumber.replace(/\s/g, ''),
+    idDocumentFileId: d.idDocument?.id ?? '',
+    selfieFileId: d.selfie?.id ?? '',
+    ...(d.income?.id ? { proofOfIncomeFileId: d.income.id } : {}),
   }
+}
+
+/** Maps API validation paths (e.g. "verification.idNumber") onto wizard fields and their step. */
+export const API_FIELD_MAP: Record<string, { field: keyof Errors; step: number }> = {
+  proposedPrice: { field: 'proposedPrice', step: 0 },
+  moveInDate: { field: 'moveInDate', step: 0 },
+  stayMonths: { field: 'stayMonths', step: 0 },
+  message: { field: 'message', step: 0 },
+  agreementAccepted: { field: 'acceptAll', step: 1 },
+  'verification.idType': { field: 'idType', step: 2 },
+  'verification.idNumber': { field: 'idNumber', step: 2 },
+  'verification.idDocumentFileId': { field: 'idDocument', step: 2 },
+  'verification.selfieFileId': { field: 'selfie', step: 2 },
+  'verification.proofOfIncomeFileId': { field: 'income', step: 2 },
+  'profile.occupation': { field: 'occupation', step: 3 },
+  'profile.monthlyIncome': { field: 'monthlyIncome', step: 3 },
+  'profile.occupants': { field: 'occupants', step: 3 },
+  'profile.aboutMe': { field: 'aboutMe', step: 3 },
+  'profile.employer': { field: 'employer', step: 3 },
+  'profile.references': { field: 'references', step: 3 },
 }
 
 export function buildProfile(d: ApplyDraft): RenterProfile {

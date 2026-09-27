@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ChevronRight, FileCheck, FileX, IdCard, Send, ShieldCheck } from 'lucide-react'
 import { ApplicationStatusBadge, Avatar, Button, Card, EmptyState, PageHeader, Tabs } from '@/components/ui'
-import { useStore } from '@/store/useStore'
+import { useLoad, useMyApplications, useStore } from '@/store/useStore'
 import { formatMoney, timeAgo } from '@/lib/utils'
 import type { Application } from '@/types'
 import { ActionModal } from '@/components/admin/ActionModal'
@@ -13,16 +13,18 @@ import { ID_TYPE_LABEL, statusEnteredAt } from '@/components/admin/helpers'
 type Tab = 'queue' | 'verified'
 
 export default function AdminVerificationPage() {
-  const applications = useStore((s) => s.applications)
-  const users = useStore((s) => s.users)
-  const listings = useStore((s) => s.listings)
+  const applications = useMyApplications()
+  const usersById = useStore((s) => s.usersById)
+  const summaries = useStore((s) => s.listingSummaries)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const { loading } = useLoad(() => fetchMyApplications(), [fetchMyApplications])
   const run = useRunAction()
   const nav = useNavigate()
   const [tab, setTab] = useState<Tab>('queue')
   const [pending, setPending] = useState<{ app: Application; spec: ActionSpec } | null>(null)
 
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
-  const listingById = useMemo(() => new Map(listings.map((l) => [l.id, l])), [listings])
+  const userById = useMemo(() => ({ get: (id: string) => usersById[id] }), [usersById])
+  const listingById = useMemo(() => ({ get: (id: string) => summaries[id] }), [summaries])
 
   // Tenant Pass holders get priority review; within each group oldest first.
   const sortQueue = (a: Application, b: Application) => {
@@ -48,7 +50,9 @@ export default function AdminVerificationPage() {
         ]}
       />
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && loading ? (
+        <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-28 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+      ) : rows.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck className="h-6 w-6" />}
           title={tab === 'queue' ? 'Queue is clear' : 'Nothing waiting to be sent'}
@@ -85,7 +89,7 @@ export default function AdminVerificationPage() {
                         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-ink-500">
                           <span>{tab === 'queue' ? 'Submitted' : 'Verified'} {timeAgo(tab === 'queue' ? a.createdAt : statusEnteredAt(a))}</span>
                           <span className="inline-flex items-center gap-1"><IdCard className="h-3.5 w-3.5" /> {a.verification ? ID_TYPE_LABEL[a.verification.idType] : 'No ID'}</span>
-                          {a.verification?.proofOfIncomeName
+                          {a.verification?.hasProofOfIncome
                             ? <span className="inline-flex items-center gap-1 text-emerald-700"><FileCheck className="h-3.5 w-3.5" /> Income proof</span>
                             : <span className="inline-flex items-center gap-1 text-amber-700"><FileX className="h-3.5 w-3.5" /> No income proof</span>}
                           <span className="inline-flex items-center gap-1">Affordability <AffordabilityBadge income={a.profile?.monthlyIncome} rent={a.agreedPrice} /></span>
@@ -97,7 +101,7 @@ export default function AdminVerificationPage() {
                       {tab === 'queue' ? (
                         <>
                           {a.status === 'submitted' && (
-                            <Button size="sm" variant="outline" onClick={() => run(a, START_REVIEW)}>Start review</Button>
+                            <Button size="sm" variant="outline" onClick={() => void run(a, START_REVIEW).catch(() => {})}>Start review</Button>
                           )}
                           <Button size="sm" onClick={() => setPending({ app: a, spec: { ...APPROVE_VERIFICATION, label: 'Verify' } })}>
                             <ShieldCheck className="h-4 w-4" /> Verify

@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowUpDown, Home, Search, SlidersHorizontal, X } from 'lucide-react'
-import { useStore } from '@/store/useStore'
+import { ArrowUpDown, ChevronLeft, ChevronRight, Home, Loader2, Search, SlidersHorizontal, X } from 'lucide-react'
+import { useListingQuery, type ListingQuery } from '@/store/useStore'
 import { PROPERTY_TYPES } from '@/lib/status'
 import { Button, EmptyState, Input, Label, Modal, Select, Toggle } from '@/components/ui'
 import { ListingCard } from '@/components/listings/ListingCard'
-import { sortFeaturedFirst, typeLabel } from '@/components/listings/helpers'
+import { typeLabel } from '@/components/listings/helpers'
 import { cn, formatMoney } from '@/lib/utils'
-import type { Listing, PropertyType } from '@/types'
+import type { PropertyType } from '@/types'
 
 type SortKey = 'featured' | 'price_asc' | 'price_desc' | 'newest'
 
@@ -22,10 +22,20 @@ const FILTER_KEYS = ['q', 'city', 'type', 'min', 'max', 'beds', 'furnished', 'bi
 type FilterKey = (typeof FILTER_KEYS)[number]
 
 const num = (v: string | null) => (v && !Number.isNaN(Number(v)) ? Number(v) : undefined)
+const PAGE_SIZE = 24
+
+/** Value that only updates after `ms` without changes (for free-text filters). */
+function useDebounced<T>(value: T, ms = 300) {
+  const [v, setV] = useState(value)
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), ms)
+    return () => window.clearTimeout(t)
+  }, [value, ms])
+  return v
+}
 
 export default function ListingsPage() {
   const [params, setParams] = useSearchParams()
-  const listings = useStore((s) => s.listings)
   const [sheet, setSheet] = useState(false)
 
   const f = {
@@ -40,10 +50,12 @@ export default function ListingsPage() {
     stay: params.get('stay') ?? '',
   }
   const sort = (SORTS.some((s) => s.value === params.get('sort')) ? params.get('sort') : 'featured') as SortKey
+  const page = Math.max(1, num(params.get('page')) ?? 1)
 
-  const setParam = (key: FilterKey | 'sort', value: string | boolean) => {
+  const setParam = (key: FilterKey | 'sort' | 'page', value: string | boolean) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev)
+      if (key !== 'page') next.delete('page')
       const v = typeof value === 'boolean' ? (value ? '1' : '') : value
       if (v && !(key === 'sort' && v === 'featured')) next.set(key, v)
       else next.delete(key)
@@ -59,34 +71,20 @@ export default function ListingsPage() {
     }, { replace: true })
   }
 
-  const active = useMemo(() => listings.filter((l) => l.status === 'active'), [listings])
-  const cities = useMemo(() => Array.from(new Set(active.map((l) => l.city))).sort(), [active])
+  // Filtering, sorting and paging happen server-side; typed fields are debounced.
+  const q = useDebounced(f.q.trim())
+  const min = useDebounced(f.min)
+  const max = useDebounced(f.max)
+  const query = useMemo<ListingQuery>(() => ({
+    q: q || undefined, city: f.city || undefined, type: f.type || undefined,
+    min: num(min), max: num(max), beds: num(f.beds), stay: num(f.stay),
+    furnished: f.furnished || undefined, bills: f.bills || undefined,
+    sort, page, limit: PAGE_SIZE,
+  }), [q, f.city, f.type, min, max, f.beds, f.stay, f.furnished, f.bills, sort, page])
+  const { items: results, total, cities, loading, loaded, error } = useListingQuery(query)
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-  const results = useMemo(() => {
-    const q = f.q.trim().toLowerCase()
-    const min = num(f.min), max = num(f.max), beds = num(f.beds), stay = num(f.stay)
-    const out = active.filter((l) => {
-      if (q && !`${l.title} ${l.description} ${l.area} ${l.city} ${l.amenities.join(' ')}`.toLowerCase().includes(q)) return false
-      if (f.city && l.city.toLowerCase() !== f.city.toLowerCase()) return false
-      if (f.type && l.type !== f.type) return false
-      if (min !== undefined && l.price < min) return false
-      if (max !== undefined && l.price > max) return false
-      if (beds !== undefined && l.bedrooms < beds) return false
-      if (f.furnished && !l.furnished) return false
-      if (f.bills && !l.billsIncluded) return false
-      if (stay !== undefined && l.minStayMonths > stay) return false
-      return true
-    })
-    const cmp: Record<SortKey, (a: Listing, b: Listing) => number> = {
-      featured: sortFeaturedFirst,
-      price_asc: (a, b) => a.price - b.price,
-      price_desc: (a, b) => b.price - a.price,
-      newest: (a, b) => b.createdAt.localeCompare(a.createdAt),
-    }
-    return out.sort(cmp[sort])
-  }, [active, f.q, f.city, f.type, f.min, f.max, f.beds, f.furnished, f.bills, f.stay, sort])
-
-  const currency = active[0]?.currency ?? 'USD'
+  const currency = results[0]?.currency ?? 'USD'
   const chips: Array<{ key: FilterKey; label: string }> = []
   if (f.q) chips.push({ key: 'q', label: `“${f.q}”` })
   if (f.city) chips.push({ key: 'city', label: f.city })
@@ -121,7 +119,8 @@ export default function ListingsPage() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-ink-500" aria-live="polite">
-              <span className="font-semibold text-ink-900">{results.length}</span> {results.length === 1 ? 'home' : 'homes'} available
+              <span className="font-semibold text-ink-900">{total}</span> {total === 1 ? 'home' : 'homes'} available
+              {loading && <Loader2 className="ml-2 inline h-4 w-4 animate-spin text-ink-400" aria-label="Loading" />}
             </p>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" className="lg:hidden" onClick={() => setSheet(true)}>
@@ -149,7 +148,14 @@ export default function ListingsPage() {
             </div>
           )}
 
-          {results.length === 0 ? (
+          {!loaded && loading ? (
+            <div className="mt-6 grid gap-6 sm:grid-cols-2 xl:grid-cols-3" aria-busy>
+              {Array.from({ length: 6 }, (_, i) => <div key={i} className="aspect-[4/5] animate-pulse rounded-2xl bg-ink-100" />)}
+            </div>
+          ) : !loaded && error ? (
+            <EmptyState className="mt-6" icon={<Home className="h-6 w-6" />} title="We couldn’t load homes" description={error}
+              action={<Button variant="outline" onClick={() => window.location.reload()}>Try again</Button>} />
+          ) : results.length === 0 ? (
             <EmptyState
               className="mt-6"
               icon={<Home className="h-6 w-6" />}
@@ -166,6 +172,18 @@ export default function ListingsPage() {
               ))}
             </div>
           )}
+
+          {pages > 1 && (
+            <nav className="mt-8 flex items-center justify-center gap-3" aria-label="Pagination">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => { setParam('page', String(page - 1)); window.scrollTo({ top: 0 }) }}>
+                <ChevronLeft className="h-4 w-4" /> Previous
+              </Button>
+              <span className="text-sm text-ink-500">Page {page} of {pages}</span>
+              <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => { setParam('page', String(page + 1)); window.scrollTo({ top: 0 }) }}>
+                Next <ChevronRight className="h-4 w-4" />
+              </Button>
+            </nav>
+          )}
         </div>
       </div>
 
@@ -176,7 +194,7 @@ export default function ListingsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={clearAll}>Clear all</Button>
-            <Button onClick={() => setSheet(false)}>Show {results.length} {results.length === 1 ? 'home' : 'homes'}</Button>
+            <Button onClick={() => setSheet(false)}>Show {total} {total === 1 ? 'home' : 'homes'}</Button>
           </>
         }
       >

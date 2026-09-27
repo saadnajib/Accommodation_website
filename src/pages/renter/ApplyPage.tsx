@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, CheckCircle2, Clock, EyeOff, FileText, Home, Send, ShieldCheck } from 'lucide-react'
-import type { Listing, User } from '@/types'
+import type { Listing, RenterProfile, User } from '@/types'
 import { ApplicationStatusBadge, Button, Card, EmptyState, Stepper } from '@/components/ui'
-import { useCurrentUser, useListing, useStore } from '@/store/useStore'
+import { useCurrentUser, useListing, useLoad, useMyApplications, useStore } from '@/store/useStore'
+import { isApiError } from '@/lib/api'
 import { formatDate, formatMoney, timeAgo } from '@/lib/utils'
 import { isTerminal } from '@/components/shared/applicationUtils'
 import {
-  STEPS, buildProfile, buildVerification, clearDraft, emptyDraft, loadDraft, saveDraft, validateStep,
+  API_FIELD_MAP, STEPS, buildProfile, buildVerification, clearDraft, emptyDraft, loadDraft, saveDraft, validateStep,
   type ApplyDraft, type Errors,
 } from '@/components/renter/applyDraft'
 import { AboutStep, AgreementStep, FeeEstimate, ListingSummary, OfferStep, ReviewStep, VerifyStep } from '@/components/renter/ApplySteps'
@@ -16,10 +17,19 @@ export default function ApplyPage() {
   const { listingId } = useParams()
   const listing = useListing(listingId)
   const user = useCurrentUser()
-  const applications = useStore((s) => s.applications)
+  const fetchListing = useStore((s) => s.fetchListing)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const applications = useMyApplications()
   const [submitted, setSubmitted] = useState(false)
+  const { loading } = useLoad(
+    () => Promise.all([listingId ? fetchListing(listingId) : Promise.resolve(null), fetchMyApplications()]),
+    [listingId, fetchListing, fetchMyApplications],
+  )
 
   if (!user) return null
+  if (loading && (!listing || !applications.length)) {
+    return <div className="container-x flex min-h-[60vh] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-label="Loading" /></div>
+  }
 
   if (!listing || listing.status !== 'active') {
     return (
@@ -32,7 +42,7 @@ export default function ApplyPage() {
     )
   }
 
-  const existing = applications.find((a) => a.listingId === listing.id && a.renterId === user.id && !isTerminal(a.status))
+  const existing = applications.find((a) => a.listingId === listing.id && !isTerminal(a.status))
   if (existing && !submitted) {
     return (
       <div className="container-x py-12 sm:py-16">
@@ -50,43 +60,46 @@ export default function ApplyPage() {
     )
   }
 
-  return <ApplyWizard key={listing.id} listing={listing} user={user} onSubmitted={() => setSubmitted(true)} />
+  return <ApplyWizard key={listing.id} listing={listing} user={user} lastProfile={applications.find((a) => a.profile)?.profile} onSubmitted={() => setSubmitted(true)} />
 }
 
-function ApplyWizard({ listing, user, onSubmitted }: { listing: Listing; user: User; onSubmitted: () => void }) {
+function ApplyWizard({ listing, user, lastProfile, onSubmitted }: { listing: Listing; user: User; lastProfile?: RenterProfile; onSubmitted: () => void }) {
   const fees = useStore((s) => s.fees)
-  const applications = useStore((s) => s.applications)
   const submitApplication = useStore((s) => s.submitApplication)
   const toast = useStore((s) => s.toast)
   const nav = useNavigate()
   const topRef = useRef<HTMLDivElement>(null)
 
-  const mine = useMemo(
-    () => applications.filter((a) => a.renterId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [applications, user.id],
-  )
-  const lastVerified = mine.find((a) => a.verification)
-  const lastProfile = mine.find((a) => a.profile)?.profile
-  const canReuse = user.verification === 'verified' && !!lastVerified
-  const previous = canReuse ? lastVerified : undefined
-
-  const [draft, setDraft] = useState<ApplyDraft>(() => loadDraft(listing.id, emptyDraft(listing, canReuse, lastProfile)))
+  const [draft, setDraft] = useState<ApplyDraft>(() => loadDraft(listing.id, emptyDraft(listing, lastProfile)))
   const [touched, setTouched] = useState<Set<string>>(() => new Set())
+  const [serverErrors, setServerErrors] = useState<Errors>({})
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => { saveDraft(listing.id, draft) }, [draft, listing.id])
 
-  const set = (patch: Partial<ApplyDraft>) => setDraft((d) => ({ ...d, ...patch }))
+  const set = (patch: Partial<ApplyDraft>) => {
+    setDraft((d) => ({ ...d, ...patch }))
+    // Editing a field clears the server's complaint about it.
+    setServerErrors((e) => {
+      const keys = Object.keys(patch).filter((k) => k in e)
+      if (!keys.length) return e
+      const next = { ...e }
+      for (const k of keys) delete next[k as keyof Errors]
+      return next
+    })
+  }
   const touch = (k: keyof Errors) => setTouched((t) => (t.has(k) ? t : new Set(t).add(k)))
   const errors = validateStep(draft.step, draft, listing)
   const valid = Object.keys(errors).length === 0
-  const err = (k: keyof Errors) => (touched.has(k) ? errors[k] : undefined)
+  const err = (k: keyof Errors) => serverErrors[k] ?? (touched.has(k) ? errors[k] : undefined)
 
   const goTo = (step: number) => {
     set({ step })
     requestAnimationFrame(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
 
-  const submit = () => {
+  const submit = async () => {
+    if (submitting) return
     for (let s = 0; s < 4; s++) {
       if (Object.keys(validateStep(s, draft, listing)).length) {
         toast({ title: 'Something is missing', body: `Please review “${STEPS[s]}”.`, tone: 'error' })
@@ -95,19 +108,39 @@ function ApplyWizard({ listing, user, onSubmitted }: { listing: Listing; user: U
         return
       }
     }
-    const app = submitApplication({
-      listingId: listing.id,
-      proposedPrice: Number(draft.proposedPrice),
-      moveInDate: new Date(`${draft.moveInDate}T12:00:00`).toISOString(),
-      stayMonths: Number(draft.stayMonths),
-      message: draft.message.trim(),
-      verification: buildVerification(draft, previous),
-      profile: buildProfile(draft),
-    })
-    clearDraft(listing.id)
-    onSubmitted()
-    toast({ title: 'Application submitted', body: 'Our team will verify your details and present you to the owner.', tone: 'success' })
-    nav(`/dashboard/applications/${app.id}`)
+    setSubmitting(true)
+    try {
+      const app = await submitApplication({
+        listingId: listing.id,
+        proposedPrice: Number(draft.proposedPrice),
+        moveInDate: new Date(`${draft.moveInDate}T12:00:00`).toISOString(),
+        stayMonths: Number(draft.stayMonths),
+        message: draft.message.trim(),
+        verification: buildVerification(draft),
+        profile: buildProfile(draft),
+      })
+      clearDraft(listing.id)
+      onSubmitted()
+      toast({ title: 'Application submitted', body: 'Our team will verify your details and present you to the owner.', tone: 'success' })
+      nav(`/dashboard/applications/${app.id}`)
+    } catch (e) {
+      // Field-level problems: show them next to the fields and jump to the first affected step.
+      if (isApiError(e)) {
+        const mapped: Errors = {}
+        let step = Infinity
+        for (const [path, message] of Object.entries(e.fieldErrors)) {
+          const m = API_FIELD_MAP[path]
+          if (m) { mapped[m.field] = message; step = Math.min(step, m.step) }
+        }
+        if (Object.keys(mapped).length) {
+          setServerErrors(mapped)
+          goTo(step)
+        }
+        if (e.status === 409) void useStore.getState().fetchMyApplications().catch(() => {})
+      }
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const stepProps = { draft, set, err, touch, listing }
@@ -131,9 +164,9 @@ function ApplyWizard({ listing, user, onSubmitted }: { listing: Listing; user: U
           <div key={draft.step} className="animate-fade-up p-5 sm:p-8">
             {draft.step === 0 && <OfferStep {...stepProps} />}
             {draft.step === 1 && <AgreementStep {...stepProps} fees={fees} user={user} />}
-            {draft.step === 2 && <VerifyStep {...stepProps} previous={previous} />}
+            {draft.step === 2 && <VerifyStep {...stepProps} verified={user.verification === 'verified'} />}
             {draft.step === 3 && <AboutStep {...stepProps} />}
-            {draft.step === 4 && <ReviewStep draft={draft} listing={listing} onEdit={goTo} previous={previous} fees={fees} user={user} />}
+            {draft.step === 4 && <ReviewStep draft={draft} listing={listing} onEdit={goTo} fees={fees} user={user} />}
           </div>
           <div className="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-b-2xl border-t border-ink-100 bg-white/95 px-5 py-4 backdrop-blur sm:px-8">
             <Button variant="ghost" onClick={() => goTo(draft.step - 1)} disabled={draft.step === 0}>
@@ -142,7 +175,7 @@ function ApplyWizard({ listing, user, onSubmitted }: { listing: Listing; user: U
             <div className="flex items-center gap-3">
               {!valid && !isLast && <span className="hidden text-xs text-ink-400 sm:block">Complete this step to continue</span>}
               {isLast ? (
-                <Button size="lg" onClick={submit} disabled={!valid}><Send className="h-4 w-4" /> Submit application</Button>
+                <Button size="lg" onClick={() => void submit()} disabled={!valid} loading={submitting}><Send className="h-4 w-4" /> Submit application</Button>
               ) : (
                 <Button onClick={() => goTo(draft.step + 1)} disabled={!valid}>Next <ArrowRight className="h-4 w-4" /></Button>
               )}
@@ -167,7 +200,7 @@ function ApplyWizard({ listing, user, onSubmitted }: { listing: Listing; user: U
               <li className="flex gap-2.5"><ShieldCheck className="h-4 w-4 shrink-0 text-brand-700" /> Every renter is verified by our team before owners see them.</li>
               <li className="flex gap-2.5"><EyeOff className="h-4 w-4 shrink-0 text-brand-700" /> Your contact details stay private until both sides pay.</li>
               <li className="flex gap-2.5"><Clock className="h-4 w-4 shrink-0 text-brand-700" /> Most applications are reviewed within 24 hours.</li>
-              <li className="flex gap-2.5"><FileText className="h-4 w-4 shrink-0 text-brand-700" /> Your progress is saved in this tab if you refresh.</li>
+              <li className="flex gap-2.5"><FileText className="h-4 w-4 shrink-0 text-brand-700" /> Your progress is saved in this tab if you refresh (except your ID number).</li>
             </ul>
           </Card>
         </aside>

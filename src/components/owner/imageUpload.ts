@@ -21,9 +21,10 @@ function loadImage(file: File): Promise<HTMLImageElement> {
 
 /**
  * Decodes an image file, downscales it so the long edge is at most 1600px and re-encodes it as
- * JPEG (quality 0.82). Returns a data URL. EXIF orientation is applied by the browser on decode.
+ * JPEG (quality 0.82) to keep uploads small. Returns a File ready for POST /api/files.
+ * EXIF orientation is applied by the browser on decode (and the re-encode strips metadata).
  */
-export async function processImageFile(file: File): Promise<string> {
+export async function processImageFile(file: File): Promise<File> {
   const img = await loadImage(file)
   const w = img.naturalWidth
   const h = img.naturalHeight
@@ -39,5 +40,8 @@ export async function processImageFile(file: File): Promise<string> {
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode'))), 'image/jpeg', JPEG_QUALITY))
+  const base = file.name.replace(/\.[^.]+$/, '') || 'photo'
+  return new File([blob], `${base}.jpg`, { type: 'image/jpeg' })
 }

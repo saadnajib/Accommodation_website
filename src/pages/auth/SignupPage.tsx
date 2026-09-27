@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Building2, CheckCircle2, HandCoins, KeyRound, Lock, Mail, Phone, User as UserIcon, UserCheck } from 'lucide-react'
+import { isApiError } from '@/lib/api'
+import { passwordProblem } from '@/lib/password'
 import { useStore } from '@/store/useStore'
 import { Button, Input } from '@/components/ui'
 import { dashboardPath } from '@/lib/paths'
@@ -17,7 +19,6 @@ const ROLES: Array<{ value: SignupRole; title: string; desc: string; icon: typeo
 export default function SignupPage() {
   const [params] = useSearchParams()
   const signup = useStore((s) => s.signup)
-  const users = useStore((s) => s.users)
   const toast = useStore((s) => s.toast)
   const nav = useNavigate()
 
@@ -25,27 +26,44 @@ export default function SignupPage() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [agree, setAgree] = useState(false)
-  const [errors, setErrors] = useState<Partial<Record<'name' | 'email' | 'agree', string>>>({})
+  const [busy, setBusy] = useState(false)
+  const [errors, setErrors] = useState<Partial<Record<'name' | 'email' | 'phone' | 'password' | 'confirm' | 'agree' | 'form', string>>>({})
 
-  const onSubmit = (e: FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     const next: typeof errors = {}
     const em = email.trim().toLowerCase()
     if (name.trim().length < 2) next.name = 'Please enter your full name'
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) next.email = 'Enter a valid email address'
-    else if (users.some((u) => u.email.toLowerCase() === em)) next.email = 'An account with this email already exists. Try signing in.'
+    const pwError = passwordProblem(password)
+    if (pwError) next.password = pwError
+    if (!confirm) next.confirm = 'Repeat your password'
+    else if (confirm !== password) next.confirm = 'Passwords don’t match'
     if (!agree) next.agree = 'Please accept the terms to continue'
     setErrors(next)
-    if (Object.keys(next).length) return
+    if (Object.keys(next).length || busy) return
 
-    const user = signup({ name: name.trim(), email: em, role, phone: phone.trim() || undefined })
-    toast({
-      title: `Welcome to StayBridge, ${user.name.split(' ')[0]}!`,
-      body: role === 'owner' ? 'Create your first listing — it’s free.' : 'Find a home and apply — we’ll verify you along the way.',
-      tone: 'success',
-    })
-    nav(dashboardPath(user.role), { replace: true })
+    setBusy(true)
+    try {
+      const user = await signup({ name: name.trim(), email: em, password, role, phone: phone.trim() || undefined })
+      toast({
+        title: `Welcome to StayBridge, ${user.name.split(' ')[0]}!`,
+        body: role === 'owner' ? 'Create your first listing — it’s free.' : 'Find a home and apply — we’ll verify you along the way.',
+        tone: 'success',
+      })
+      nav(dashboardPath(user.role), { replace: true })
+    } catch (err) {
+      if (isApiError(err)) {
+        const f = err.fieldErrors
+        const mapped = { name: f.name, email: f.email ?? (err.status === 409 ? `${err.message}. Try signing in.` : undefined), phone: f.phone, password: f.password }
+        setErrors(Object.values(mapped).some(Boolean) ? mapped : { form: err.message })
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -55,7 +73,7 @@ export default function SignupPage() {
           <h1 className="text-3xl font-bold tracking-tight text-ink-900">Create your account</h1>
           <p className="mt-2 text-ink-500">Free to join. You only pay when a deal goes through.</p>
 
-          <form onSubmit={onSubmit} className="mt-6 space-y-5" noValidate>
+          <form onSubmit={(e) => void onSubmit(e)} className="mt-6 space-y-5" noValidate>
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-ink-700">I want to…</legend>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -81,7 +99,14 @@ export default function SignupPage() {
             <Input id="email" name="email" type="email" label="Email address" autoComplete="email" placeholder="you@example.com" value={email}
               onChange={(e) => setEmail(e.target.value)} error={errors.email} left={<Mail className="h-4 w-4" />} />
             <Input id="phone" name="phone" type="tel" label="Phone" hint="(optional)" autoComplete="tel" placeholder="+44 7700 900000" value={phone}
-              onChange={(e) => setPhone(e.target.value)} left={<Phone className="h-4 w-4" />} help="Kept private until both sides commit." />
+              onChange={(e) => setPhone(e.target.value)} error={errors.phone} left={<Phone className="h-4 w-4" />} help="Kept private until both sides commit." />
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Input id="password" name="password" type="password" label="Password" autoComplete="new-password" value={password}
+                onChange={(e) => setPassword(e.target.value)} error={errors.password} left={<Lock className="h-4 w-4" />}
+                help={errors.password ? undefined : 'At least 10 characters, with letters and numbers.'} />
+              <Input id="confirm" name="confirm" type="password" label="Confirm password" autoComplete="new-password" value={confirm}
+                onChange={(e) => setConfirm(e.target.value)} error={errors.confirm} left={<Lock className="h-4 w-4" />} />
+            </div>
 
             <div>
               <label className={cn('flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-colors', agree ? 'border-brand-500 bg-brand-50' : errors.agree ? 'border-red-300' : 'border-ink-200')}>
@@ -93,7 +118,8 @@ export default function SignupPage() {
               {errors.agree && <p className="mt-1.5 text-xs text-red-600">{errors.agree}</p>}
             </div>
 
-            <Button type="submit" full size="lg">Create {role} account <ArrowRight className="h-4 w-4" /></Button>
+            {errors.form && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{errors.form}</p>}
+            <Button type="submit" full size="lg" loading={busy}>Create {role} account <ArrowRight className="h-4 w-4" /></Button>
           </form>
           <p className="mt-4 text-sm text-ink-500">Already have an account? <Link to="/login" className="font-semibold text-brand-700 hover:underline">Sign in</Link></p>
         </div>

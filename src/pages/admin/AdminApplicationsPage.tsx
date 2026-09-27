@@ -1,18 +1,18 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Columns3, List, ListChecks, Search, Zap } from 'lucide-react'
 import { ApplicationStatusBadge, Avatar, Card, EmptyState, Input, PageHeader, Select } from '@/components/ui'
-import { useStore } from '@/store/useStore'
+import { useLoad, useMyApplications, useStore } from '@/store/useStore'
 import { APPLICATION_STATUS, PIPELINE } from '@/lib/status'
 import { cn, formatMoney, timeAgo } from '@/lib/utils'
-import type { Application, ApplicationStatus, Listing, User } from '@/types'
+import type { Application, ApplicationStatus, ListingSummary, User } from '@/types'
 import { PaidDot } from '@/components/admin/AdminBits'
 import { CLOSED_STATUSES, isClosed, statusEnteredAt } from '@/components/admin/helpers'
 
 type View = 'board' | 'list'
 type StatusFilter = 'all' | 'open' | 'closed' | ApplicationStatus
 
-interface Row { app: Application; renter?: User; listing?: Listing }
+interface Row { app: Application; renter?: User; listing?: ListingSummary }
 
 const columns: Array<{ key: string; label: string; statuses: ApplicationStatus[] }> = [
   ...PIPELINE.map((s) => ({ key: s, label: APPLICATION_STATUS[s].label, statuses: [s] })),
@@ -25,19 +25,22 @@ function initialView(): View {
 }
 
 export default function AdminApplicationsPage() {
-  const applications = useStore((s) => s.applications)
-  const users = useStore((s) => s.users)
-  const listings = useStore((s) => s.listings)
+  // Admins get every application from GET /me/applications (filtered client-side for instant search).
+  const applications = useMyApplications()
+  const usersById = useStore((s) => s.usersById)
+  const summaries = useStore((s) => s.listingSummaries)
+  const listingsById = useStore((s) => s.listingsById)
+  const fetchMyApplications = useStore((s) => s.fetchMyApplications)
+  const { loading } = useLoad(() => fetchMyApplications(), [fetchMyApplications])
+  const [params] = useSearchParams()
   const [view, setView] = useState<View>(initialView)
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(() => params.get('q') ?? '')
   const [status, setStatus] = useState<StatusFilter>('all')
 
   const rows = useMemo<Row[]>(() => {
-    const userById = new Map(users.map((u) => [u.id, u]))
-    const listingById = new Map(listings.map((l) => [l.id, l]))
     const needle = q.trim().toLowerCase()
     return applications
-      .map((app) => ({ app, renter: userById.get(app.renterId), listing: listingById.get(app.listingId) }))
+      .map((app) => ({ app, renter: usersById[app.renterId], listing: summaries[app.listingId] ?? listingsById[app.listingId] }))
       .filter(({ app, renter, listing }) => {
         if (status === 'open' && (isClosed(app.status) || app.status === 'completed')) return false
         if (status === 'closed' && !isClosed(app.status)) return false
@@ -46,7 +49,7 @@ export default function AdminApplicationsPage() {
         return (renter?.name.toLowerCase().includes(needle) ?? false) || (listing?.title.toLowerCase().includes(needle) ?? false)
       })
       .sort((a, b) => statusEnteredAt(b.app).localeCompare(statusEnteredAt(a.app)))
-  }, [applications, users, listings, q, status])
+  }, [applications, usersById, summaries, listingsById, q, status])
 
   const statusOptions = [
     { value: 'all', label: 'All statuses' },
@@ -88,7 +91,9 @@ export default function AdminApplicationsPage() {
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && loading ? (
+        <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-16 animate-pulse rounded-2xl bg-ink-100" />)}</div>
+      ) : rows.length === 0 ? (
         <EmptyState icon={<ListChecks className="h-6 w-6" />} title="No applications match" description="Try a different search or status filter." />
       ) : view === 'board' ? (
         <Board rows={rows} />

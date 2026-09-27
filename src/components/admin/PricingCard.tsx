@@ -16,6 +16,7 @@ export function PricingCard({ app, listing, renter, onMarkFee }: {
   const toast = useStore((s) => s.toast)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(app.agreedPrice))
+  const [saving, setSaving] = useState(false)
 
   const currency = listing?.currency ?? fees.currency
   const asking = listing?.price ?? app.proposedPrice
@@ -24,17 +25,21 @@ export function PricingCard({ app, listing, renter, onMarkFee }: {
   const draftNum = Number(draft)
   const draftValid = draft.trim() !== '' && Number.isFinite(draftNum) && draftNum > 0
   const shownPrice = isEditing && draftValid ? draftNum : app.agreedPrice
-  const preview = isEditing && draftValid ? computeFees(draftNum, fees, { hasTenantPass: renter?.hasTenantPass }) : { renterFee: app.renterFee, ownerFee: app.ownerFee }
+  // Live preview uses the client-side estimate; the server recomputes authoritatively on save.
+  const preview = isEditing && draftValid ? computeFees(draftNum, fees, { hasTenantPass: renter?.hasTenantPass }) : { renterFee: app.renterFee ?? 0, ownerFee: app.ownerFee ?? 0 }
   const total = preview.renterFee + preview.ownerFee
   const diff = asking ? ((shownPrice - asking) / asking) * 100 : 0
   const feesDue = app.status === 'awaiting_fees'
 
-  const save = () => {
-    if (!draftValid) return
+  const save = async () => {
+    if (!draftValid || saving) return
     const price = Math.round(draftNum)
-    setAgreedPrice(app.id, price)
-    setEditing(false)
-    toast({ title: 'Agreed price updated', body: `${formatMoney(price, currency)}/month. Fees recalculated.`, tone: 'success' })
+    setSaving(true)
+    try {
+      await setAgreedPrice(app.id, price)
+      setEditing(false)
+      toast({ title: 'Agreed price updated', body: `${formatMoney(price, currency)}/month. Fees recalculated.`, tone: 'success' })
+    } catch { /* toast shown by the store */ } finally { setSaving(false) }
   }
 
   return (
@@ -57,11 +62,11 @@ export function PricingCard({ app, listing, renter, onMarkFee }: {
             <div className="min-w-0">
               <p className="text-xs font-medium uppercase tracking-wide text-brand-800">Agreed rent</p>
               {isEditing ? (
-                <form noValidate className="mt-1 flex flex-wrap items-start gap-2" onSubmit={(e) => { e.preventDefault(); save() }}>
+                <form noValidate className="mt-1 flex flex-wrap items-start gap-2" onSubmit={(e) => { e.preventDefault(); void save() }}>
                   <Input id="agreed-price" aria-label="Agreed monthly rent" type="number" min={1} step={1} inputMode="numeric" className="w-36"
                     value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus
                     error={draftValid ? undefined : 'Enter a positive amount'} />
-                  <Button type="submit" size="md" disabled={!draftValid}>Save</Button>
+                  <Button type="submit" size="md" disabled={!draftValid} loading={saving}>Save</Button>
                   <Button type="button" variant="ghost" onClick={() => { setEditing(false); setDraft(String(app.agreedPrice)) }}>Cancel</Button>
                 </form>
               ) : (
