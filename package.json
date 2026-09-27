@@ -4,10 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "concurrently -n web,api -c cyan,green \"vite\" \"npm run dev --prefix server\"",
+    "build": "tsc -b && vite build && npm run build --prefix server",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:web": "vite",
+    "dev:api": "npm run dev --prefix server",
+    "test": "npm test --prefix server",
+    "postinstall": "npm install --prefix server"
   },
   "dependencies": {
     "lucide-react": "^1.48.0",
@@ -22,6 +26,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
