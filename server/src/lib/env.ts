@@ -21,6 +21,10 @@ const schema = z.object({
   ADMIN_EMAIL: z.email().default('admin@staybridge.demo'),
   ADMIN_PASSWORD: z.string().min(10).default('ChangeMe!Admin2026'),
   SEED_DEMO: z.string().default('false'),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  AGENT_MODEL: z.string().default('claude-opus-5'),
+  AGENT_INTERVAL_MINUTES: z.coerce.number().min(0).default(10),
+  AGENT_MONTHLY_BUDGET_CENTS: z.coerce.number().min(0).default(5000),
 })
 
 const parsed = schema.safeParse(process.env)

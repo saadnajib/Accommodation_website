@@ -199,3 +199,44 @@ export const purchases = sqliteTable('purchases', {
   createdAt: text('created_at').notNull(),
 })
 
+
+/* ---------- AI employees ---------- */
+
+/** A decision an AI employee wants to make. Low-risk ones auto-execute; the rest wait for the CEO. */
+export const agentProposals = sqliteTable('agent_proposals', {
+  id: text('id').primaryKey(),
+  agentKey: text('agent_key').notNull(), // e.g. 'moderator' | 'verifier' | 'deals' | 'growth'
+  action: text('action').notNull(), // see server/src/agents/actions.ts
+  targetType: text('target_type').notNull(), // 'listing' | 'application' | 'user' | 'settings' | 'none'
+  targetId: text('target_id'),
+  payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  rationale: text('rationale').notNull(),
+  confidence: integer('confidence').notNull(), // 0-100
+  risk: text('risk', { enum: ['low', 'medium', 'high'] }).notNull(),
+  status: text('status', { enum: ['pending', 'approved', 'rejected', 'executed', 'failed', 'expired'] }).notNull().default('pending'),
+  decidedBy: text('decided_by'), // admin id or 'policy'
+  decidedAt: text('decided_at'),
+  decisionNote: text('decision_note'),
+  executedAt: text('executed_at'),
+  result: text('result'),
+  runId: text('run_id'),
+  createdAt: text('created_at').notNull(),
+}, (t) => [index('proposals_status_idx').on(t.status), index('proposals_target_idx').on(t.targetType, t.targetId)])
+
+/** One execution of one AI employee. */
+export const agentRuns = sqliteTable('agent_runs', {
+  id: text('id').primaryKey(),
+  agentKey: text('agent_key').notNull(),
+  trigger: text('trigger', { enum: ['schedule', 'manual', 'event'] }).notNull(),
+  status: text('status', { enum: ['running', 'succeeded', 'failed', 'skipped'] }).notNull(),
+  summary: text('summary').notNull().default(''),
+  itemsReviewed: integer('items_reviewed').notNull().default(0),
+  proposalsCreated: integer('proposals_created').notNull().default(0),
+  autoExecuted: integer('auto_executed').notNull().default(0),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  costCents: integer('cost_cents').notNull().default(0),
+  error: text('error'),
+  startedAt: text('started_at').notNull(),
+  finishedAt: text('finished_at'),
+}, (t) => [index('runs_agent_idx').on(t.agentKey, t.startedAt)])
